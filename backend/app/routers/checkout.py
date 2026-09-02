@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from app.services.risk_scoring import compute_risk_score
 from app.services.policy_engine import apply_policy
 from app.services.trustpass import issue_trustpass
+from app.services.analyst_actions import create_alert
 
 router = APIRouter(prefix="/checkout", tags=["checkout"])
 
@@ -33,6 +34,8 @@ def evaluate_checkout(req: EvaluateCheckoutRequest):
         max_permitted_amount_inr=req.order_amount if order_creation_allowed else 0,
         coupon_cap_inr=req.coupon_cap_inr,
     )
+
+    create_alert(risk, policy, order_id=req.cart_id, order_amount=req.order_amount)
 
     return {
         "risk": risk,
