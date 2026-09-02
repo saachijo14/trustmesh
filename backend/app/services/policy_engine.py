@@ -3,6 +3,7 @@ Tiered policy engine for TrustMesh.
 Turns a risk score/tier into a bounded, explainable action.
 """
 from app.services.audit_log import log_event
+from app.services.neo4j_client import get_driver
 POLICY_VERSION = "v1.0"
 
 TIER_ACTIONS = {
@@ -42,6 +43,54 @@ DEFAULT_POLICY_CONFIG = {
     "hold_expiry_minutes": 30,
 }
 
+def get_policy_config() -> dict:
+    """
+    Return the currently active merchant policy configuration.
+
+    Falls back to DEFAULT_POLICY_CONFIG if no saved configuration exists.
+    """
+    driver = get_driver()
+
+    with driver.session() as session:
+        record = session.run(
+            """
+            MATCH (p:PolicyConfig {policy_version: $policy_version})
+            RETURN properties(p) AS config
+            """,
+            policy_version=POLICY_VERSION,
+        ).single()
+
+    if record is None:
+        return DEFAULT_POLICY_CONFIG.copy()
+
+    config = dict(record["config"])
+    config.pop("policy_version", None)
+
+    return config
+
+
+def save_policy_config(config: dict) -> dict:
+    """
+    Persist the active merchant policy configuration in Neo4j.
+    """
+    driver = get_driver()
+
+    with driver.session() as session:
+        session.run(
+            """
+            MERGE (p:PolicyConfig {policy_version: $policy_version})
+            SET p.max_autonomous_order_value_inr = $max_autonomous_order_value_inr,
+                p.coupon_cap_new_account_inr = $coupon_cap_new_account_inr,
+                p.coupon_cap_medium_risk_inr = $coupon_cap_medium_risk_inr,
+                p.ring_node_threshold = $ring_node_threshold,
+                p.otp_max_challenges_per_window = $otp_max_challenges_per_window,
+                p.hold_expiry_minutes = $hold_expiry_minutes
+            """,
+            policy_version=POLICY_VERSION,
+            **config,
+        )
+
+    return config
 
 def apply_policy(risk_result: dict, order_amount: float = 0, config: dict = None) -> dict:
     """
@@ -49,7 +98,7 @@ def apply_policy(risk_result: dict, order_amount: float = 0, config: dict = None
     policy and return a full decision object with reason codes,
     matching the PRD's required explanation output.
     """
-    config = config or DEFAULT_POLICY_CONFIG
+    config = config or get_policy_config()
     tier = risk_result["risk_tier"]
     score = risk_result["risk_score"]
     features = risk_result["features"]
