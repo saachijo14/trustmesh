@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import events, simulation, checkout, alerts
+from app.routers import events, simulation, checkout, alerts, rings
 
 app = FastAPI(
     title="TrustMesh API",
@@ -20,6 +20,7 @@ app.include_router(events.router)
 app.include_router(simulation.router)
 app.include_router(checkout.router)
 app.include_router(alerts.router)
+app.include_router(rings.router)
 
 
 @app.get("/")
