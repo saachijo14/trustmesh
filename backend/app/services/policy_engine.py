@@ -2,7 +2,7 @@
 Tiered policy engine for TrustMesh.
 Turns a risk score/tier into a bounded, explainable action.
 """
-
+from app.services.audit_log import log_event
 POLICY_VERSION = "v1.0"
 
 TIER_ACTIONS = {
@@ -83,7 +83,7 @@ def apply_policy(risk_result: dict, order_amount: float = 0, config: dict = None
         decision = base["decision"]
         requires_human_approval = base["requires_human_approval"]
 
-    return {
+    result = {
         "customer_id": risk_result["customer_id"],
         "risk_score": score,
         "risk_tier": tier,
@@ -91,11 +91,20 @@ def apply_policy(risk_result: dict, order_amount: float = 0, config: dict = None
         "allowed_actions": base["allowed_actions"],
         "blocked_actions": base["blocked_actions"],
         "reason_codes": reason_codes,
-        "signals_observed": reason_codes,  # same list, exposed under a name that doesn't imply it drove the decision
+        "signals_observed": reason_codes,
         "requires_human_approval": requires_human_approval,
         "policy_version": POLICY_VERSION,
         "recommended_action": decision,
     }
+
+    log_event(
+        event_type="POLICY_DECISION",
+        customer_id=risk_result["customer_id"],
+        actor="system",
+        details={"decision": decision, "reason_codes": reason_codes, "order_amount": order_amount},
+    )
+
+    return result
 
 
 if __name__ == "__main__":

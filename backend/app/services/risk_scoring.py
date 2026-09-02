@@ -13,6 +13,7 @@ B: Connection to confirmed abuse (ring association)
 F: Abnormal return/refund frequency
 """
 from app.services.neo4j_client import get_driver
+from app.services.audit_log import log_event
 
 WEIGHTS = {"D": 0.25, "R": 0.20, "V": 0.15, "C": 0.15, "B": 0.15, "F": 0.10}
 
@@ -168,12 +169,20 @@ def compute_risk_score(customer_id: str) -> dict:
     else:
         tier = "low"
 
-    return {
+    result = {
         "customer_id": customer_id,
         "risk_score": round(weighted_score, 1),
         "risk_tier": tier,
         "features": {k: round(v, 1) for k, v in features.items()},
     }
+
+    log_event(
+        event_type="RISK_SCORED",
+        customer_id=customer_id,
+        actor="system",
+        details={"risk_score": result["risk_score"], "risk_tier": tier, "features": result["features"]},
+    )
+    return result
 
 
 if __name__ == "__main__":

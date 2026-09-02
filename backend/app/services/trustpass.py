@@ -5,6 +5,7 @@ object that a buyer/agent can act on, without exposing raw risk internals.
 """
 import uuid
 from datetime import datetime, timezone, timedelta
+from app.services.audit_log import log_event
 
 TRUSTPASS_TTL_MINUTES = 30
 
@@ -25,7 +26,7 @@ def issue_trustpass(policy_result: dict, subject_type: str, subject_id: str, max
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(minutes=TRUSTPASS_TTL_MINUTES)
 
-    return {
+    result = {
         "trustpass_id": f"tp_{uuid.uuid4().hex[:8]}",
         "subject_type": subject_type,
         "subject_id": subject_id,
@@ -42,6 +43,15 @@ def issue_trustpass(policy_result: dict, subject_type: str, subject_id: str, max
         "requires_human_approval": policy_result["requires_human_approval"],
         "status": "active",
     }
+
+    log_event(
+        event_type="TRUSTPASS_ISSUED",
+        customer_id=policy_result["customer_id"],
+        actor="system",
+        details={"trustpass_id": result["trustpass_id"], "decision": result["decision"], "subject_id": subject_id},
+    )
+
+    return result
 
 
 def is_expired(trustpass: dict) -> bool:
