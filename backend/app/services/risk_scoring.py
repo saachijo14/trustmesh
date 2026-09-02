@@ -56,7 +56,7 @@ def compute_refund_reuse(customer_id: str) -> float:
     with driver.session() as session:
         record = session.run(query, customer_id=customer_id).single()
         co_users = record["co_users"] if record else 0
-    return _normalize(co_users, cap=10)
+    return _normalize(co_users, cap=5)
 
 
 def compute_velocity(customer_id: str) -> float:
@@ -95,15 +95,20 @@ def compute_coupon_concentration(customer_id: str) -> float:
 
 def compute_ring_association(customer_id: str) -> float:
     """
-    B: Is this customer part of a detected ring? Ring membership is a
-    strong signal on its own; larger rings score higher but any ring
-    of ~8+ already registers as maximal risk.
+    B: Connection to a detected fraud ring.
+
+    Ring membership is treated as a strong graph-based abuse signal.
+    The existence of a detected ring matters more than ring size, so
+    any customer belonging to a detected ring receives the maximum
+    ring-association score of 100.
     """
     driver = get_driver()
+
     query = """
     MATCH (c:Customer {customer_id: $customer_id})
     RETURN c.ring_id AS ring_id
     """
+
     with driver.session() as session:
         record = session.run(query, customer_id=customer_id).single()
         ring_id = record["ring_id"] if record else None
@@ -111,15 +116,7 @@ def compute_ring_association(customer_id: str) -> float:
     if not ring_id:
         return 0.0
 
-    size_query = """
-    MATCH (c:Customer {ring_id: $ring_id})
-    RETURN count(c) AS ring_size
-    """
-    with driver.session() as session:
-        record = session.run(size_query, ring_id=ring_id).single()
-        ring_size = record["ring_size"] if record else 0
-
-    return _normalize(ring_size, cap=8)
+    return 100.0
 
 
 def compute_refund_frequency(customer_id: str) -> float:
@@ -143,7 +140,7 @@ def compute_refund_frequency(customer_id: str) -> float:
     return (refunds / total) * 100.0
 
 
-def compute_risk_score(customer_id: str) -> dict:
+def compute_risk_score(customer_id: str, log_result: bool = True) -> dict:
     """
     Compute the full weighted risk score for a customer, with a
     breakdown of each contributing feature — matching the PRD's
@@ -176,11 +173,16 @@ def compute_risk_score(customer_id: str) -> dict:
         "features": {k: round(v, 1) for k, v in features.items()},
     }
 
-    log_event(
+    if log_result:
+        log_event(
         event_type="RISK_SCORED",
         customer_id=customer_id,
         actor="system",
-        details={"risk_score": result["risk_score"], "risk_tier": tier, "features": result["features"]},
+        details={
+            "risk_score": result["risk_score"],
+            "risk_tier": tier,
+            "features": result["features"],
+        },
     )
     return result
 
