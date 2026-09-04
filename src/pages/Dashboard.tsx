@@ -130,8 +130,6 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [injecting, setInjecting] = useState(false);
-
   useEffect(() => {
     const loadDashboard = async () => {
       try {
@@ -156,14 +154,6 @@ export default function Dashboard() {
 
     loadDashboard();
   }, []);
-
-  const handleInject = () => {
-    setInjecting(true);
-
-    setTimeout(() => {
-      setInjecting(false);
-    }, 2000);
-  };
 
   if (loading) {
     return (
@@ -313,38 +303,37 @@ export default function Dashboard() {
 
         <div className="flex gap-2">
           <button
-            onClick={handleInject}
-            className={`btn-ghost rounded-lg px-4 py-2 text-sm font-medium flex items-center gap-2 ${
-              injecting ? "opacity-60" : ""
-            }`}
+            onClick={() => {
+              const report = {
+                generated_at: new Date().toISOString(),
+                summary: data.summary,
+                orders_gmv_trend: data.orders_gmv_trend,
+                intervention_outcomes: data.intervention_outcomes,
+                active_rings: data.active_rings,
+                latest_alerts: data.latest_alerts,
+              };
+
+              const blob = new Blob(
+                [JSON.stringify(report, null, 2)],
+                { type: "application/json" }
+              );
+
+              const url = URL.createObjectURL(blob);
+              const link = document.createElement("a");
+
+              link.href = url;
+              link.download = `trustmesh-dashboard-report-${new Date()
+                .toISOString()
+                .slice(0, 10)}.json`;
+
+              document.body.appendChild(link);
+              link.click();
+              document.body.removeChild(link);
+
+              URL.revokeObjectURL(url);
+            }}
+            className="btn-primary rounded-lg px-4 py-2 text-sm font-medium"
           >
-            {injecting ? (
-              <>
-                <div className="w-3 h-3 rounded-full border-2 border-[#6366f1] border-t-transparent animate-spin" />
-                Injecting…
-              </>
-            ) : (
-              <>
-                <svg
-                  className="w-4 h-4"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={1.5}
-                    d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z"
-                  />
-                </svg>
-
-                Inject Scenario
-              </>
-            )}
-          </button>
-
-          <button className="btn-primary rounded-lg px-4 py-2 text-sm font-medium">
             Export Report
           </button>
         </div>
