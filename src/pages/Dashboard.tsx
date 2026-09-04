@@ -344,8 +344,8 @@ export default function Dashboard() {
         {kpis.map((k, i) => (
           <div
             key={i}
-            className="glass-card liquid-wave-card rounded-xl p-4 cursor-pointer hover:scale-[1.01] transition-transform"
-          >
+             className="glass-card liquid-wave-card rounded-xl p-4"
+              >
             <div className="flex items-start justify-between mb-3">
               <div className="text-lg">{k.icon}</div>
 
