@@ -174,3 +174,13 @@ export const evaluateCheckout = (
       coupon_cap_inr: couponCapInr,
     }),
   });
+
+  /* ---------------- Policy Versions ---------------- */
+
+export const getPolicyVersions = () =>
+  request("/policies/versions");
+
+export const rollbackPolicyVersion = (versionId: string) =>
+  request(`/policies/versions/${versionId}/rollback`, {
+    method: "POST",
+  });

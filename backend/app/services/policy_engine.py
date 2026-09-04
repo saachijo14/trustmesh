@@ -44,18 +44,19 @@ DEFAULT_POLICY_CONFIG = {
 }
 
 def get_policy_config() -> dict:
-    """
-    Return the currently active merchant policy configuration.
-
-    Falls back to DEFAULT_POLICY_CONFIG if no saved configuration exists.
-    """
     driver = get_driver()
 
     with driver.session() as session:
         record = session.run(
             """
             MATCH (p:PolicyConfig {policy_version: $policy_version})
-            RETURN properties(p) AS config
+            RETURN
+                p.max_autonomous_order_value_inr AS max_autonomous_order_value_inr,
+                p.coupon_cap_new_account_inr AS coupon_cap_new_account_inr,
+                p.coupon_cap_medium_risk_inr AS coupon_cap_medium_risk_inr,
+                p.ring_node_threshold AS ring_node_threshold,
+                p.otp_max_challenges_per_window AS otp_max_challenges_per_window,
+                p.hold_expiry_minutes AS hold_expiry_minutes
             """,
             policy_version=POLICY_VERSION,
         ).single()
@@ -63,97 +64,138 @@ def get_policy_config() -> dict:
     if record is None:
         return DEFAULT_POLICY_CONFIG.copy()
 
-    config = dict(record["config"])
-    config.pop("policy_version", None)
-
-    return config
+    return {
+        "max_autonomous_order_value_inr": record["max_autonomous_order_value_inr"],
+        "coupon_cap_new_account_inr": record["coupon_cap_new_account_inr"],
+        "coupon_cap_medium_risk_inr": record["coupon_cap_medium_risk_inr"],
+        "ring_node_threshold": record["ring_node_threshold"],
+        "otp_max_challenges_per_window": record["otp_max_challenges_per_window"],
+        "hold_expiry_minutes": record["hold_expiry_minutes"],
+    }
 
 
 def save_policy_config(config: dict) -> dict:
-    """
-    Persist the active merchant policy configuration in Neo4j.
-    """
     driver = get_driver()
 
     with driver.session() as session:
+
+        # Save current policy configuration as individual Neo4j properties.
         session.run(
             """
             MERGE (p:PolicyConfig {policy_version: $policy_version})
-            SET p.max_autonomous_order_value_inr = $max_autonomous_order_value_inr,
+            SET
+                p.max_autonomous_order_value_inr = $max_autonomous_order_value_inr,
                 p.coupon_cap_new_account_inr = $coupon_cap_new_account_inr,
                 p.coupon_cap_medium_risk_inr = $coupon_cap_medium_risk_inr,
                 p.ring_node_threshold = $ring_node_threshold,
                 p.otp_max_challenges_per_window = $otp_max_challenges_per_window,
-                p.hold_expiry_minutes = $hold_expiry_minutes
+                p.hold_expiry_minutes = $hold_expiry_minutes,
+                p.updated_at = toString(datetime())
             """,
             policy_version=POLICY_VERSION,
             **config,
         )
 
+        # Mark previous versions inactive.
+        session.run(
+            """
+            MATCH (v:PolicyVersion)
+            SET v.active = false
+            """
+        )
+
+        # Count existing versions.
+        count_record = session.run(
+            """
+            MATCH (v:PolicyVersion)
+            RETURN count(v) AS count
+            """
+        ).single()
+
+        version_number = int(count_record["count"]) + 1
+        version_id = f"{POLICY_VERSION}-{version_number}"
+
+        # Store the configuration snapshot as individual properties.
+        session.run(
+            """
+            CREATE (v:PolicyVersion {
+                version_id: $version_id,
+                policy_version: $policy_version,
+                created_at: toString(datetime()),
+                active: true,
+                changes: $changes,
+                max_autonomous_order_value_inr: $max_autonomous_order_value_inr,
+                coupon_cap_new_account_inr: $coupon_cap_new_account_inr,
+                coupon_cap_medium_risk_inr: $coupon_cap_medium_risk_inr,
+                ring_node_threshold: $ring_node_threshold,
+                otp_max_challenges_per_window: $otp_max_challenges_per_window,
+                hold_expiry_minutes: $hold_expiry_minutes
+            })
+            """,
+            version_id=version_id,
+            policy_version=POLICY_VERSION,
+            changes="Policy configuration updated",
+            **config,
+        )
+
     return config
 
-def apply_policy(risk_result: dict, order_amount: float = 0, config: dict = None) -> dict:
+def apply_policy(risk: dict, order_amount: float = 0) -> dict:
     """
-    Given a risk_scoring.compute_risk_score() result, apply the tiered
-    policy and return a full decision object with reason codes,
-    matching the PRD's required explanation output.
+    Apply the active policy to a risk result.
+
+    Order amount is enforced against the configured autonomous
+    order value limit.
     """
-    config = config or get_policy_config()
-    tier = risk_result["risk_tier"]
-    score = risk_result["risk_score"]
-    features = risk_result["features"]
 
-    base = TIER_ACTIONS[tier]
+    config = get_policy_config()
 
-    # Build reason codes from the strongest contributing features
-    reason_codes = []
-    if features.get("D", 0) >= 50:
-        reason_codes.append("DEVICE_SHARED_WITH_MULTIPLE_ACCOUNTS")
-    if features.get("R", 0) >= 50:
-        reason_codes.append("REFUND_DESTINATION_REUSED")
-    if features.get("C", 0) >= 50:
-        reason_codes.append("COUPON_CONCENTRATION_HIGH")
-    if features.get("B", 0) >= 50:
-        reason_codes.append("RING_ASSOCIATION_DETECTED")
-    if features.get("F", 0) >= 50:
-        reason_codes.append("ABNORMAL_REFUND_FREQUENCY")
-    if features.get("V", 0) >= 50:
-        reason_codes.append("HIGH_ORDER_VELOCITY")
-    if not reason_codes:
-        reason_codes.append("NO_SIGNIFICANT_RISK_SIGNALS")
+    risk_tier = risk["risk_tier"]
+    risk_score = risk["risk_score"]
 
-    # Escalate if order exceeds the autonomous max, regardless of tier
-    exceeds_autonomous_limit = order_amount > config["max_autonomous_order_value_inr"]
-    if exceeds_autonomous_limit and tier == "low":
-        decision = "STEP_UP_REQUIRED"
-        requires_human_approval = False
-        reason_codes.append("ORDER_EXCEEDS_AUTONOMOUS_LIMIT")
-    else:
-        decision = base["decision"]
-        requires_human_approval = base["requires_human_approval"]
+    tier_policy = TIER_ACTIONS[risk_tier]
 
-    result = {
-        "customer_id": risk_result["customer_id"],
-        "risk_score": score,
-        "risk_tier": tier,
-        "decision": decision,
-        "allowed_actions": base["allowed_actions"],
-        "blocked_actions": base["blocked_actions"],
-        "reason_codes": reason_codes,
-        "signals_observed": reason_codes,
-        "requires_human_approval": requires_human_approval,
-        "policy_version": POLICY_VERSION,
-        "recommended_action": decision,
-    }
+    allowed_actions = list(tier_policy["allowed_actions"])
+    blocked_actions = list(tier_policy["blocked_actions"])
 
-    log_event(
-        event_type="POLICY_DECISION",
-        customer_id=risk_result["customer_id"],
-        actor="system",
-        details={"decision": decision, "reason_codes": reason_codes, "order_amount": order_amount},
+    reason_codes = list(risk.get("reason_codes", []))
+
+    max_autonomous_value = float(
+        config["max_autonomous_order_value_inr"]
     )
 
-    return result
+    # Enforce autonomous order value limit.
+    if (
+        order_amount > max_autonomous_value
+        and "CREATE_ORDER" in allowed_actions
+    ):
+        allowed_actions.remove("CREATE_ORDER")
+
+        if "CREATE_ORDER" not in blocked_actions:
+            blocked_actions.append("CREATE_ORDER")
+
+        if "ORDER_VALUE_LIMIT_EXCEEDED" not in reason_codes:
+            reason_codes.append("ORDER_VALUE_LIMIT_EXCEEDED")
+
+        decision = "STEP_UP_REQUIRED"
+        recommended_action = "STEP_UP_REQUIRED"
+        requires_human_approval = False
+
+    else:
+        decision = tier_policy["decision"]
+        recommended_action = decision
+        requires_human_approval = tier_policy["requires_human_approval"]
+
+    return {
+        "decision": decision,
+        "risk_tier": risk_tier,
+        "allowed_actions": allowed_actions,
+        "blocked_actions": blocked_actions,
+        "reason_codes": reason_codes,
+        "requires_human_approval": requires_human_approval,
+        "policy_version": POLICY_VERSION,
+        "recommended_action": recommended_action,
+    }
 
 
 if __name__ == "__main__":
