@@ -1,59 +1,150 @@
+import { useEffect, useMemo, useState } from "react";
 import {
-  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, RadarChart, Radar, PolarGrid, PolarAngleAxis
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  RadarChart,
+  Radar,
+  PolarGrid,
+  PolarAngleAxis,
 } from "recharts";
 
-const performanceData = [
-  { month: "Mar", precision: 88, recall: 79, f1: 83 },
-  { month: "Apr", precision: 89, recall: 81, f1: 85 },
-  { month: "May", precision: 91, recall: 82, f1: 86 },
-  { month: "Jun", precision: 90, recall: 85, f1: 87 },
-  { month: "Jul", precision: 93, recall: 86, f1: 89 },
-  { month: "Aug", precision: 94, recall: 88, f1: 91 },
-];
+import { getMetrics, getAlerts } from "../api/client";
 
-const fraudValueData = [
-  { week: "W1", detected: 82, missed: 14, fp: 8 },
-  { week: "W2", detected: 91, missed: 9, fp: 6 },
-  { week: "W3", detected: 78, missed: 18, fp: 12 },
-  { week: "W4", detected: 95, missed: 5, fp: 7 },
-];
+type MetricsData = {
+  generated_at: string;
+  orders: {
+    monitored_orders: number;
+    gmv_screened_inr: number;
+    average_order_value_inr: number;
+    max_order_value_inr: number;
+  };
+  rings: {
+    active_rings: number;
+    customers_in_rings: number;
+    distribution: {
+      ring_id: string;
+      nodes: number;
+    }[];
+  };
+  alerts: {
+    total_alerts: number;
+    open: number;
+    reviewing: number;
+    resolved: number;
+    closed: number;
+    escalated: number;
+    resolution_rate_percent: number;
+    escalation_rate_percent: number;
+  };
+  risk_distribution: {
+    risk_tier: string;
+    count: number;
+  }[];
+  action_distribution: {
+    action: string;
+    count: number;
+  }[];
+  exposure: {
+    total_exposure_inr: number;
+    pending_exposure_inr: number;
+  };
+  outcomes: {
+    outcome: string;
+    count: number;
+  }[];
+  evaluation: {
+    ground_truth_available: boolean;
+    label_source: string;
+    evaluation_dataset: {
+      total_cases: number;
+      evaluated_cases: number;
+      skipped_cases: number;
+      fraud_cases: number;
+      legitimate_cases: number;
+      fraud_score_threshold: number;
+    };
+    confusion_matrix: {
+      true_positive: number;
+      true_negative: number;
+      false_positive: number;
+      false_negative: number;
+    };
+    precision: number;
+    recall: number;
+    f1_score: number;
+    false_positive_rate: number;
+    accuracy: number;
+    note: string;
+  };
+};
 
-const ringOutcomes = [
-  { ring: "RING-047", detected: "Aug 12", resolved: "—", exposure: "₹42.1L", outcome: "ACTIVE", actions: 24 },
-  { ring: "RING-031", detected: "Aug 8", resolved: "—", exposure: "₹18.7L", outcome: "ACTIVE", actions: 11 },
-  { ring: "RING-022", detected: "Jul 28", resolved: "Aug 14", exposure: "₹31.2L", outcome: "DISMANTLED", actions: 34 },
-  { ring: "RING-018", detected: "Jul 15", resolved: "Aug 2", exposure: "₹9.4L", outcome: "DISMANTLED", actions: 19 },
-];
+type Alert = {
+  alert_id: string;
+  order_id: string;
+  customer_id: string;
+  risk_score: number;
+  risk_tier: string;
+  exposure_inr: number;
+  top_reasons: string[];
+  rec_action: string;
+  status: string;
+  assignee: string;
+  created_at: string;
+};
 
-const radarData = [
-  { metric: "Precision", value: 94 },
-  { metric: "Recall", value: 88 },
-  { metric: "F1 Score", value: 91 },
-  { metric: "Coverage", value: 85 },
-  { metric: "Speed", value: 78 },
-  { metric: "FP Rate", value: 82 },
-];
+const formatINR = (value: number) =>
+  `₹${value.toLocaleString("en-IN", {
+    maximumFractionDigits: 0,
+  })}`;
 
-const ledger = [
-  { id: "DEC-18821", alert: "ALT-9821", decision: "BLOCK", model: "94", analyst: "Arjun R.", outcome: "TP", value: "₹42,400", time: "4m ago" },
-  { id: "DEC-18820", alert: "ALT-9820", decision: "OTP", model: "81", analyst: "Priya M.", outcome: "TP", value: "₹18,700", time: "12m ago" },
-  { id: "DEC-18819", alert: "ALT-9819", decision: "ALLOW", model: "67", analyst: "Auto", outcome: "FP", value: "₹9,800", time: "28m ago" },
-  { id: "DEC-18818", alert: "ALT-9818", decision: "BLOCK", model: "52", analyst: "Arjun R.", outcome: "TP", value: "₹4,200", time: "1h ago" },
-  { id: "DEC-18817", alert: "ALT-9817", decision: "ALLOW", model: "35", analyst: "Priya M.", outcome: "TN", value: "—", time: "2h ago" },
-];
+const formatPercent = (value: number) =>
+  `${(value * 100).toFixed(1)}%`;
+
+const formatDateTime = (value: string) => {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (!active || !payload?.length) return null;
+
   return (
     <div className="glass rounded-lg p-3 border border-[rgba(99,102,241,0.3)] text-xs">
-      <div className="text-[#94a3b8] mb-1 font-mono">{label}</div>
+      <div className="text-[#94a3b8] mb-2 font-mono">{label}</div>
+
       {// eslint-disable-next-line @typescript-eslint/no-explicit-any
-        payload.map((p: any) => (
-        <div key={p.name} className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full" style={{ background: p.color || p.stroke }} />
-          <span className="text-[#64748b]">{p.name}:</span>
-          <span className="text-[#e2e8f0] font-semibold">{p.value}</span>
+      payload.map((item: any) => (
+        <div key={item.name} className="flex items-center gap-2 mb-1">
+          <div
+            className="w-2 h-2 rounded-full"
+            style={{
+              background: item.color || item.fill || item.stroke,
+            }}
+          />
+
+          <span className="text-[#64748b]">
+            {item.name}:
+          </span>
+
+          <span className="text-[#e2e8f0] font-semibold">
+            {item.value}
+          </span>
         </div>
       ))}
     </div>
@@ -61,137 +152,744 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 };
 
 export default function Metrics() {
+  const [metrics, setMetrics] = useState<MetricsData | null>(null);
+  const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const loadMetrics = async () => {
+    try {
+      setLoading(true);
+      setError("");
+
+      const [metricsData, alertsData] = await Promise.all([
+        getMetrics(),
+        getAlerts(),
+      ]);
+
+      setMetrics(metricsData as MetricsData);
+      setAlerts((alertsData as Alert[]) || []);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to load metrics"
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    // The async loader updates state after the API response arrives.
+  // This is intentional because the effect synchronizes the page with backend policy state.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadMetrics();
+  }, []);
+
+  const radarData = useMemo(() => {
+    if (!metrics) return [];
+
+    return [
+      {
+        metric: "Precision",
+        value: Number(formatPercent(metrics.evaluation.precision).replace("%", "")),
+      },
+      {
+        metric: "Recall",
+        value: Number(formatPercent(metrics.evaluation.recall).replace("%", "")),
+      },
+      {
+        metric: "F1 Score",
+        value: Number(formatPercent(metrics.evaluation.f1_score).replace("%", "")),
+      },
+      {
+        metric: "Accuracy",
+        value: Number(formatPercent(metrics.evaluation.accuracy).replace("%", "")),
+      },
+      {
+        metric: "FP Control",
+        value: Math.max(
+          0,
+          100 -
+            Number(
+              formatPercent(metrics.evaluation.false_positive_rate).replace(
+                "%",
+                ""
+              )
+            )
+        ),
+      },
+    ];
+  }, [metrics]);
+
+  const riskChartData = useMemo(() => {
+    if (!metrics) return [];
+
+    return metrics.risk_distribution.map((item) => ({
+      tier: item.risk_tier.toUpperCase(),
+      count: item.count,
+    }));
+  }, [metrics]);
+
+  const actionChartData = useMemo(() => {
+    if (!metrics) return [];
+
+    return metrics.action_distribution.map((item) => ({
+      action: item.action,
+      count: item.count,
+    }));
+  }, [metrics]);
+
+  const ringChartData = useMemo(() => {
+    if (!metrics) return [];
+
+    return metrics.rings.distribution.map((item) => ({
+      ring: item.ring_id,
+      customers: item.nodes,
+    }));
+  }, [metrics]);
+
+  const exportLedger = () => {
+    if (!alerts.length) return;
+
+    const headers = [
+      "Alert ID",
+      "Order ID",
+      "Customer ID",
+      "Risk Score",
+      "Risk Tier",
+      "Recommended Action",
+      "Status",
+      "Assignee",
+      "Exposure INR",
+      "Created At",
+    ];
+
+    const rows = alerts.map((alert) => [
+      alert.alert_id,
+      alert.order_id,
+      alert.customer_id,
+      alert.risk_score,
+      alert.risk_tier,
+      alert.rec_action,
+      alert.status,
+      alert.assignee,
+      alert.exposure_inr,
+      alert.created_at,
+    ]);
+
+    const csv = [
+      headers,
+      ...rows,
+    ]
+      .map((row) =>
+        row
+          .map((value) => `"${String(value ?? "").replace(/"/g, '""')}"`)
+          .join(",")
+      )
+      .join("\n");
+
+    const blob = new Blob([csv], {
+      type: "text/csv;charset=utf-8;",
+    });
+
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = `trustmesh-decision-ledger-${new Date()
+      .toISOString()
+      .slice(0, 10)}.csv`;
+
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    URL.revokeObjectURL(url);
+  };
+
+  if (loading) {
+    return (
+      <div className="h-full scroll-area p-6 flex items-center justify-center">
+        <div className="text-sm text-[#64748b] font-mono">
+          Loading live metrics...
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !metrics) {
+    return (
+      <div className="h-full scroll-area p-6">
+        <div className="glass-card rounded-xl p-6 border border-red-500/20">
+          <h2 className="text-sm font-semibold text-[#ef4444] mb-2">
+            Metrics unavailable
+          </h2>
+
+          <p className="text-xs text-[#94a3b8] mb-4">
+            {error || "Unable to load metrics."}
+          </p>
+
+          <button
+            onClick={() => void loadMetrics()}
+            className="btn-ghost rounded-lg px-4 py-2 text-xs"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="h-full scroll-area p-6 space-y-6">
-      <div>
-        <h1 className="text-xl font-bold text-[#e2e8f0] font-display">Metrics & Analytics</h1>
-        <p className="text-sm text-[#64748b]">Model performance, fraud value, and decision intelligence</p>
+      {/* Header */}
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-xl font-bold text-[#e2e8f0] font-display">
+            Metrics & Analytics
+          </h1>
+
+          <p className="text-sm text-[#64748b]">
+            Live TrustMesh operational and model intelligence
+          </p>
+        </div>
+
+        <div className="text-[10px] text-[#64748b] font-mono">
+          Updated {formatDateTime(metrics.generated_at)}
+        </div>
       </div>
 
       {/* KPI row */}
       <div className="grid grid-cols-5 gap-4">
         {[
-          { label: "Precision", value: "94.2%", delta: "+1.1%", color: "#6366f1" },
-          { label: "Recall", value: "88.1%", delta: "+2.3%", color: "#06b6d4" },
-          { label: "F1 Score", value: "91.0%", delta: "+1.7%", color: "#10b981" },
-          { label: "Fraud Value Caught", value: "₹74.2L", delta: "+₹6.8L", color: "#f59e0b" },
-          { label: "FP Cost (Aug)", value: "₹3.2L", delta: "-₹40K", color: "#8b5cf6" },
-        ].map(k => (
-          <div key={k.label} className="glass-card rounded-xl p-4 liquid-wave-card">
-            <div className="text-2xl font-bold font-display mb-1" style={{ color: k.color }}>{k.value}</div>
-            <div className="text-xs text-[#64748b]">{k.label}</div>
-            <div className="text-[10px] text-[#10b981] mt-1 font-mono">{k.delta}</div>
+          {
+            label: "Precision",
+            value: formatPercent(metrics.evaluation.precision),
+            delta: `${metrics.evaluation.confusion_matrix.true_positive} TP`,
+            color: "#6366f1",
+          },
+          {
+            label: "Recall",
+            value: formatPercent(metrics.evaluation.recall),
+            delta: `${metrics.evaluation.confusion_matrix.false_negative} FN`,
+            color: "#06b6d4",
+          },
+          {
+            label: "F1 Score",
+            value: formatPercent(metrics.evaluation.f1_score),
+            delta: `${metrics.evaluation.evaluation_dataset.evaluated_cases} evaluated`,
+            color: "#10b981",
+          },
+          {
+            label: "GMV Screened",
+            value: formatINR(metrics.orders.gmv_screened_inr),
+            delta: `${metrics.orders.monitored_orders} orders`,
+            color: "#f59e0b",
+          },
+          {
+            label: "Pending Exposure",
+            value: formatINR(metrics.exposure.pending_exposure_inr),
+            delta: `${metrics.alerts.open} open alert${
+              metrics.alerts.open === 1 ? "" : "s"
+            }`,
+            color: "#8b5cf6",
+          },
+        ].map((kpi) => (
+          <div
+            key={kpi.label}
+            className="glass-card rounded-xl p-4 liquid-wave-card"
+          >
+            <div
+              className="text-2xl font-bold font-display mb-1"
+              style={{ color: kpi.color }}
+            >
+              {kpi.value}
+            </div>
+
+            <div className="text-xs text-[#64748b]">
+              {kpi.label}
+            </div>
+
+            <div className="text-[10px] text-[#10b981] mt-1 font-mono">
+              {kpi.delta}
+            </div>
           </div>
         ))}
       </div>
 
+      {/* Model + Risk */}
       <div className="grid grid-cols-3 gap-5">
-        {/* Precision / Recall / F1 over time */}
         <div className="col-span-2 glass-card rounded-xl p-5">
-          <h3 className="text-sm font-semibold text-[#e2e8f0] mb-1">Model Performance Trend</h3>
-          <div className="flex gap-4 text-xs text-[#64748b] mb-4">
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[#6366f1] inline-block" />Precision</span>
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[#06b6d4] inline-block" />Recall</span>
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[#10b981] inline-block" />F1</span>
+          <div className="flex items-center justify-between mb-1">
+            <div>
+              <h3 className="text-sm font-semibold text-[#e2e8f0]">
+                Evaluation Performance
+              </h3>
+
+              <p className="text-xs text-[#64748b]">
+                Current labelled evaluation results
+              </p>
+            </div>
+
+            <span className="text-[10px] text-[#64748b] font-mono">
+              Threshold:{" "}
+              {metrics.evaluation.evaluation_dataset.fraud_score_threshold}
+            </span>
           </div>
-          <ResponsiveContainer width="100%" height={180}>
-            <LineChart data={performanceData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(99,102,241,0.08)" />
-              <XAxis dataKey="month" tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} />
-              <YAxis domain={[70, 100]} tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} />
+
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart
+              data={[
+                {
+                  metric: "Precision",
+                  value: metrics.evaluation.precision * 100,
+                },
+                {
+                  metric: "Recall",
+                  value: metrics.evaluation.recall * 100,
+                },
+                {
+                  metric: "F1",
+                  value: metrics.evaluation.f1_score * 100,
+                },
+                {
+                  metric: "Accuracy",
+                  value: metrics.evaluation.accuracy * 100,
+                },
+              ]}
+            >
+              <CartesianGrid
+                strokeDasharray="3 3"
+                stroke="rgba(99,102,241,0.08)"
+              />
+
+              <XAxis
+                dataKey="metric"
+                tick={{
+                  fill: "#64748b",
+                  fontSize: 10,
+                }}
+                axisLine={false}
+                tickLine={false}
+              />
+
+              <YAxis
+                domain={[0, 100]}
+                tick={{
+                  fill: "#64748b",
+                  fontSize: 10,
+                }}
+                axisLine={false}
+                tickLine={false}
+              />
+
               <Tooltip content={<CustomTooltip />} />
-              <Line type="monotone" dataKey="precision" stroke="#6366f1" strokeWidth={2} dot={{ fill: "#6366f1", r: 3 }} />
-              <Line type="monotone" dataKey="recall" stroke="#06b6d4" strokeWidth={2} dot={{ fill: "#06b6d4", r: 3 }} />
-              <Line type="monotone" dataKey="f1" stroke="#10b981" strokeWidth={2} dot={{ fill: "#10b981", r: 3 }} />
-            </LineChart>
+
+              <Bar
+                dataKey="value"
+                name="Score %"
+                fill="#6366f1"
+                radius={[4, 4, 0, 0]}
+              />
+            </BarChart>
           </ResponsiveContainer>
         </div>
 
         {/* Radar */}
         <div className="glass-card rounded-xl p-5">
-          <h3 className="text-sm font-semibold text-[#e2e8f0] mb-4">Model Health Radar</h3>
-          <ResponsiveContainer width="100%" height={200}>
+          <h3 className="text-sm font-semibold text-[#e2e8f0] mb-1">
+            Model Health
+          </h3>
+
+          <p className="text-xs text-[#64748b] mb-2">
+            Live evaluation metrics
+          </p>
+
+          <ResponsiveContainer width="100%" height={220}>
             <RadarChart data={radarData}>
               <PolarGrid stroke="rgba(99,102,241,0.15)" />
-              <PolarAngleAxis dataKey="metric" tick={{ fill: "#64748b", fontSize: 9 }} />
-              <Radar dataKey="value" stroke="#6366f1" fill="#6366f1" fillOpacity={0.15} strokeWidth={1.5} />
+
+              <PolarAngleAxis
+                dataKey="metric"
+                tick={{
+                  fill: "#64748b",
+                  fontSize: 9,
+                }}
+              />
+
+              <Radar
+                dataKey="value"
+                stroke="#6366f1"
+                fill="#6366f1"
+                fillOpacity={0.15}
+                strokeWidth={1.5}
+              />
             </RadarChart>
           </ResponsiveContainer>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-5">
-        {/* Fraud value breakdown */}
+      {/* Operational charts */}
+      <div className="grid grid-cols-3 gap-5">
+        {/* Risk distribution */}
         <div className="glass-card rounded-xl p-5">
-          <h3 className="text-sm font-semibold text-[#e2e8f0] mb-1">Fraud Detection by Week</h3>
-          <p className="text-xs text-[#64748b] mb-4">% of orders: detected, missed, false-positive</p>
-          <ResponsiveContainer width="100%" height={160}>
-            <BarChart data={fraudValueData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(99,102,241,0.08)" />
-              <XAxis dataKey="week" tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} />
+          <h3 className="text-sm font-semibold text-[#e2e8f0] mb-1">
+            Risk Distribution
+          </h3>
+
+          <p className="text-xs text-[#64748b] mb-4">
+            Current alert population by tier
+          </p>
+
+          <ResponsiveContainer width="100%" height={180}>
+            <BarChart data={riskChartData}>
+              <CartesianGrid
+                strokeDasharray="3 3"
+                stroke="rgba(99,102,241,0.08)"
+              />
+
+              <XAxis
+                dataKey="tier"
+                tick={{
+                  fill: "#64748b",
+                  fontSize: 9,
+                }}
+                axisLine={false}
+                tickLine={false}
+              />
+
+              <YAxis
+                allowDecimals={false}
+                tick={{
+                  fill: "#64748b",
+                  fontSize: 10,
+                }}
+                axisLine={false}
+                tickLine={false}
+              />
+
               <Tooltip content={<CustomTooltip />} />
-              <Bar dataKey="detected" fill="#10b981" radius={[3, 3, 0, 0]} />
-              <Bar dataKey="missed" fill="#ef4444" radius={[3, 3, 0, 0]} />
-              <Bar dataKey="fp" fill="#f59e0b" radius={[3, 3, 0, 0]} />
+
+              <Bar
+                dataKey="count"
+                name="Alerts"
+                fill="#8b5cf6"
+                radius={[3, 3, 0, 0]}
+              />
             </BarChart>
           </ResponsiveContainer>
         </div>
 
-        {/* Ring outcomes */}
+        {/* Actions */}
         <div className="glass-card rounded-xl p-5">
-          <h3 className="text-sm font-semibold text-[#e2e8f0] mb-4">Ring Outcomes</h3>
-          <div className="space-y-2">
-            {ringOutcomes.map(r => (
-              <div key={r.ring} className="flex items-center gap-3 p-2.5 rounded-lg bg-[rgba(13,18,40,0.4)] text-xs">
-                <span className="font-mono text-[#6366f1] font-semibold w-20">{r.ring}</span>
-                <span className="text-[#64748b] w-16">{r.detected}</span>
-                <span className="font-mono text-[#e2e8f0] w-16">{r.exposure}</span>
-                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded font-mono ${r.outcome === "ACTIVE" ? "badge-critical" : "badge-low"}`}>{r.outcome}</span>
-                <span className="text-[#64748b] ml-auto">{r.actions} actions</span>
-              </div>
-            ))}
+          <h3 className="text-sm font-semibold text-[#e2e8f0] mb-1">
+            Action Distribution
+          </h3>
+
+          <p className="text-xs text-[#64748b] mb-4">
+            Recommended actions from live alerts
+          </p>
+
+          <ResponsiveContainer width="100%" height={180}>
+            <BarChart data={actionChartData}>
+              <CartesianGrid
+                strokeDasharray="3 3"
+                stroke="rgba(99,102,241,0.08)"
+              />
+
+              <XAxis
+                dataKey="action"
+                tick={{
+                  fill: "#64748b",
+                  fontSize: 9,
+                }}
+                axisLine={false}
+                tickLine={false}
+              />
+
+              <YAxis
+                allowDecimals={false}
+                tick={{
+                  fill: "#64748b",
+                  fontSize: 10,
+                }}
+                axisLine={false}
+                tickLine={false}
+              />
+
+              <Tooltip content={<CustomTooltip />} />
+
+              <Bar
+                dataKey="count"
+                name="Actions"
+                fill="#06b6d4"
+                radius={[3, 3, 0, 0]}
+              />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        {/* Rings */}
+        <div className="glass-card rounded-xl p-5">
+          <h3 className="text-sm font-semibold text-[#e2e8f0] mb-1">
+            Active Ring Distribution
+          </h3>
+
+          <p className="text-xs text-[#64748b] mb-4">
+            Customers detected inside each ring
+          </p>
+
+          <ResponsiveContainer width="100%" height={180}>
+            <BarChart data={ringChartData}>
+              <CartesianGrid
+                strokeDasharray="3 3"
+                stroke="rgba(99,102,241,0.08)"
+              />
+
+              <XAxis
+                dataKey="ring"
+                tick={{
+                  fill: "#64748b",
+                  fontSize: 9,
+                }}
+                axisLine={false}
+                tickLine={false}
+              />
+
+              <YAxis
+                allowDecimals={false}
+                tick={{
+                  fill: "#64748b",
+                  fontSize: 10,
+                }}
+                axisLine={false}
+                tickLine={false}
+              />
+
+              <Tooltip content={<CustomTooltip />} />
+
+              <Bar
+                dataKey="customers"
+                name="Customers"
+                fill="#10b981"
+                radius={[3, 3, 0, 0]}
+              />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      {/* Operational summary */}
+      <div className="grid grid-cols-4 gap-4">
+        {[
+          {
+            label: "Average Order",
+            value: formatINR(metrics.orders.average_order_value_inr),
+          },
+          {
+            label: "Largest Order",
+            value: formatINR(metrics.orders.max_order_value_inr),
+          },
+          {
+            label: "Customers in Rings",
+            value: metrics.rings.customers_in_rings.toLocaleString("en-IN"),
+          },
+          {
+            label: "Resolution Rate",
+            value: `${metrics.alerts.resolution_rate_percent.toFixed(1)}%`,
+          },
+        ].map((item) => (
+          <div
+            key={item.label}
+            className="glass-card rounded-xl p-4"
+          >
+            <div className="text-[10px] uppercase tracking-wider text-[#64748b] mb-2">
+              {item.label}
+            </div>
+
+            <div className="text-lg font-bold text-[#e2e8f0] font-mono">
+              {item.value}
+            </div>
           </div>
+        ))}
+      </div>
+
+      {/* Confusion matrix */}
+      <div className="glass-card rounded-xl p-5">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-sm font-semibold text-[#e2e8f0]">
+              Evaluation Confusion Matrix
+            </h3>
+
+            <p className="text-xs text-[#64748b] mt-1">
+              {metrics.evaluation.evaluation_dataset.evaluated_cases} evaluated
+              cases ·{" "}
+              {metrics.evaluation.evaluation_dataset.fraud_cases} fraud ·{" "}
+              {metrics.evaluation.evaluation_dataset.legitimate_cases} legitimate
+            </p>
+          </div>
+
+          <span className="text-[10px] text-[#64748b] font-mono">
+            {metrics.evaluation.label_source}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-4 gap-4">
+          {[
+            {
+              label: "True Positive",
+              value:
+                metrics.evaluation.confusion_matrix.true_positive,
+            },
+            {
+              label: "True Negative",
+              value:
+                metrics.evaluation.confusion_matrix.true_negative,
+            },
+            {
+              label: "False Positive",
+              value:
+                metrics.evaluation.confusion_matrix.false_positive,
+            },
+            {
+              label: "False Negative",
+              value:
+                metrics.evaluation.confusion_matrix.false_negative,
+            },
+          ].map((item) => (
+            <div
+              key={item.label}
+              className="rounded-lg bg-[rgba(13,18,40,0.45)] border border-[rgba(99,102,241,0.1)] p-4"
+            >
+              <div className="text-[10px] text-[#64748b] uppercase tracking-wider">
+                {item.label}
+              </div>
+
+              <div className="text-2xl font-bold text-[#e2e8f0] font-mono mt-1">
+                {item.value}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 
       {/* Decision ledger */}
       <div className="glass-card rounded-xl overflow-hidden">
         <div className="px-5 py-3 border-b border-[rgba(99,102,241,0.15)] flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-[#e2e8f0]">Decision Ledger</h3>
-          <button className="btn-ghost rounded-lg px-3 py-1.5 text-xs">Export</button>
+          <div>
+            <h3 className="text-sm font-semibold text-[#e2e8f0]">
+              Live Decision Ledger
+            </h3>
+
+            <p className="text-[10px] text-[#64748b] mt-1">
+              Sourced from current TrustMesh alerts
+            </p>
+          </div>
+
+          <button
+            onClick={exportLedger}
+            disabled={!alerts.length}
+            className="btn-ghost rounded-lg px-3 py-1.5 text-xs disabled:opacity-40"
+          >
+            Export CSV
+          </button>
         </div>
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="border-b border-[rgba(99,102,241,0.1)]">
-              {["Decision ID", "Alert", "Decision", "Model Score", "Analyst", "Outcome", "Value", "Time"].map(h => (
-                <th key={h} className="px-4 py-3 text-left text-[10px] font-semibold text-[#64748b] uppercase tracking-wider">{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {ledger.map((d, i) => (
-              <tr key={d.id} className={`border-b border-[rgba(99,102,241,0.07)] hover:bg-[rgba(99,102,241,0.04)] transition-colors ${i % 2 === 0 ? "" : "bg-[rgba(13,18,40,0.3)]"}`}>
-                <td className="px-4 py-3 font-mono text-[#6366f1] text-[10px]">{d.id}</td>
-                <td className="px-4 py-3 font-mono text-[#94a3b8]">{d.alert}</td>
-                <td className="px-4 py-3">
-                  <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded font-mono ${
-                    d.decision === "BLOCK" ? "badge-critical" : d.decision === "OTP" ? "text-[#06b6d4] bg-[rgba(6,182,212,0.1)] border border-[rgba(6,182,212,0.2)]" : "badge-low"
-                  }`}>{d.decision}</span>
-                </td>
-                <td className="px-4 py-3 font-mono text-[#e2e8f0]">{d.model}</td>
-                <td className="px-4 py-3 text-[#94a3b8]">{d.analyst}</td>
-                <td className="px-4 py-3">
-                  <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded font-mono ${
-                    d.outcome === "TP" ? "badge-low" : d.outcome === "FP" ? "badge-medium" : "text-[#64748b] bg-[rgba(100,116,139,0.1)] border border-[rgba(100,116,139,0.2)]"
-                  }`}>{d.outcome}</span>
-                </td>
-                <td className="px-4 py-3 font-mono text-[#e2e8f0]">{d.value}</td>
-                <td className="px-4 py-3 text-[#64748b]">{d.time}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+
+        {alerts.length === 0 ? (
+          <div className="px-5 py-8 text-center text-xs text-[#64748b]">
+            No alerts available for the decision ledger.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-[rgba(99,102,241,0.1)]">
+                  {[
+                    "Alert ID",
+                    "Order",
+                    "Customer",
+                    "Risk",
+                    "Action",
+                    "Status",
+                    "Assignee",
+                    "Exposure",
+                    "Created",
+                  ].map((header) => (
+                    <th
+                      key={header}
+                      className="px-4 py-3 text-left text-[10px] font-semibold text-[#64748b] uppercase tracking-wider"
+                    >
+                      {header}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+
+              <tbody>
+                {alerts.map((alert, index) => (
+                  <tr
+                    key={alert.alert_id}
+                    className={`border-b border-[rgba(99,102,241,0.07)] hover:bg-[rgba(99,102,241,0.04)] transition-colors ${
+                      index % 2 === 0
+                        ? ""
+                        : "bg-[rgba(13,18,40,0.3)]"
+                    }`}
+                  >
+                    <td className="px-4 py-3 font-mono text-[#6366f1] text-[10px]">
+                      {alert.alert_id}
+                    </td>
+
+                    <td className="px-4 py-3 font-mono text-[#94a3b8]">
+                      {alert.order_id}
+                    </td>
+
+                    <td className="px-4 py-3 font-mono text-[#94a3b8]">
+                      {alert.customer_id}
+                    </td>
+
+                    <td className="px-4 py-3">
+                      <span className="font-mono text-[#f59e0b] font-semibold">
+                        {alert.risk_score}
+                      </span>
+                    </td>
+
+                    <td className="px-4 py-3">
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded font-mono badge-medium">
+                        {alert.rec_action}
+                      </span>
+                    </td>
+
+                    <td className="px-4 py-3">
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded font-mono text-[#c4b5fd] bg-[rgba(139,92,246,0.1)] border border-[rgba(139,92,246,0.2)]">
+                        {alert.status}
+                      </span>
+                    </td>
+
+                    <td className="px-4 py-3 text-[#94a3b8]">
+                      {alert.assignee}
+                    </td>
+
+                    <td className="px-4 py-3 font-mono text-[#e2e8f0]">
+                      {formatINR(alert.exposure_inr)}
+                    </td>
+
+                    <td className="px-4 py-3 text-[#64748b]">
+                      {formatDateTime(alert.created_at)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Evaluation note */}
+      <div className="text-[10px] text-[#475569] px-1 pb-4">
+        {metrics.evaluation.note}
       </div>
     </div>
   );
