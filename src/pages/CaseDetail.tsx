@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { getAlert, takeAlertAction } from "../api/client";
+import { getAlert, takeAlertAction, getAlertGraph } from "../api/client";
+import EntityGraph from "../components/EntityGraph";
 
 type Alert = {
   alert_id: string;
@@ -14,6 +15,33 @@ type Alert = {
   status: string;
   assignee: string | null;
   created_at: string;
+};
+
+type GraphNode = {
+  id: string;
+  type: string;
+  label: string;
+  properties: Record<string, unknown>;
+};
+
+type GraphEdge = {
+  source: string;
+  target: string;
+  relationship: string;
+  properties: Record<string, unknown>;
+};
+
+type AlertGraph = {
+  alert_id: string;
+  customer_id: string;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  summary: {
+    node_count: number;
+    edge_count: number;
+    shared_customer_count: number;
+    ring_id: string | null;
+  };
 };
 
 const actions = [
@@ -157,6 +185,12 @@ export default function CaseDetail() {
     (action) => action.label === selectedAction
   );
 
+const [graph, setGraph] = useState<AlertGraph | null>(null);
+
+const [graphLoading, setGraphLoading] = useState(true);
+
+const [graphError, setGraphError] = useState<string | null>(null);
+
   /*
    * Load the real alert from FastAPI.
    */
@@ -190,6 +224,35 @@ export default function CaseDetail() {
 
     loadAlert();
   }, [alertId]);
+
+useEffect(() => {
+  const loadGraph = async () => {
+    if (!alertId) {
+      return;
+    }
+
+    try {
+      setGraphLoading(true);
+      setGraphError(null);
+
+      const result = await getAlertGraph(alertId);
+
+      setGraph(result as AlertGraph);
+    } catch (err) {
+      console.error("Alert graph API error:", err);
+
+      setGraphError(
+        err instanceof Error
+          ? err.message
+          : "Failed to load entity graph."
+      );
+    } finally {
+      setGraphLoading(false);
+    }
+  };
+
+  loadGraph();
+}, [alertId]);
 
   /*
    * Submit an actual analyst action to FastAPI.
@@ -242,6 +305,8 @@ export default function CaseDetail() {
     }
   };
 
+
+  
   /*
    * Loading state.
    */
@@ -687,31 +752,60 @@ export default function CaseDetail() {
         ======================================================= */}
         <div className="space-y-4">
           {/* =====================================================
-              Mini Graph
+              Entity Graph
           ===================================================== */}
           <div className="glass-card rounded-xl p-4">
-            <h3 className="text-xs font-semibold text-[#e2e8f0] mb-3">
-              Entity Graph — Shortest Path
-            </h3>
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h3 className="text-xs font-semibold text-[#e2e8f0]">
+                  Entity Graph — Shortest Path
+                </h3>
 
-            <div className="relative h-48 bg-[rgba(13,18,40,0.6)] rounded-lg overflow-hidden">
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="text-center px-5">
+                <div className="text-[9px] text-[#64748b] mt-1">
+                  Customer-centered fraud evidence
+                </div>
+              </div>
+
+              {graph?.summary.ring_id && (
+                <span className="text-[8px] font-mono px-2 py-1 rounded border border-[rgba(245,158,11,0.2)] bg-[rgba(245,158,11,0.08)] text-[#f59e0b]">
+                  {graph.summary.ring_id}
+                </span>
+              )}
+            </div>
+
+            {graphLoading ? (
+              <div className="h-130 rounded-lg bg-[#060a18] flex items-center justify-center">
+                <div className="flex items-center gap-2 text-xs text-[#64748b]">
+                  <div className="w-4 h-4 rounded-full border-2 border-[#6366f1] border-t-transparent animate-spin" />
+
+                  Loading graph evidence…
+                </div>
+              </div>
+            ) : graphError ? (
+              <div className="h-130 rounded-lg bg-[#060a18] flex items-center justify-center">
+                <div className="text-center max-w-sm px-5">
                   <div className="text-2xl mb-2">
-                    🕸️
+                    ⚠️
                   </div>
 
-                  <div className="text-xs text-[#94a3b8]">
-                    Graph evidence endpoint pending
+                  <div className="text-xs text-[#e2e8f0] font-semibold">
+                    Graph unavailable
                   </div>
 
                   <div className="text-[10px] text-[#64748b] mt-1">
-                    Ring Explorer integration will provide the
-                    real entity path.
+                    {graphError}
                   </div>
                 </div>
               </div>
-            </div>
+            ) : graph ? (
+              <EntityGraph graph={graph} />
+            ) : (
+              <div className="h-130 rounded-lg bg-[#060a18] flex items-center justify-center">
+                <div className="text-xs text-[#64748b]">
+                  No graph evidence available.
+                </div>
+              </div>
+            )}
           </div>
 
           {/* =====================================================
@@ -820,40 +914,6 @@ export default function CaseDetail() {
                 )}
               </>
             )}
-          </div>
-
-          {/* =====================================================
-              Audit Timeline
-          ===================================================== */}
-          <div className="glass-card rounded-xl p-4">
-            <h3 className="text-xs font-semibold text-[#e2e8f0] mb-3">
-              Audit Timeline
-            </h3>
-
-            <div className="p-3 rounded-lg border border-dashed border-[rgba(99,102,241,0.15)]">
-              <div className="text-xs text-[#94a3b8]">
-                Audit timeline API is not connected yet.
-              </div>
-
-              <div className="text-[10px] text-[#64748b] mt-1">
-                Analyst actions are already being logged by
-                the backend audit service and will be displayed
-                here once the audit endpoint is wired.
-              </div>
-
-              <div className="text-[10px] font-mono text-[#6366f1] mt-3">
-                Created:{" "}
-                {formatDateTime(alert.created_at)}
-              </div>
-
-              <div className="text-[10px] font-mono text-[#6366f1] mt-1">
-                Current status: {alert.status}
-              </div>
-
-              <div className="text-[10px] font-mono text-[#6366f1] mt-1">
-                Assignee: {alert.assignee || "Unassigned"}
-              </div>
-            </div>
           </div>
         </div>
       </div>

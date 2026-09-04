@@ -4,6 +4,7 @@ Alerts API for TrustMesh — powers the Alert Queue and CaseDetail frontend page
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from app.services.analyst_actions import list_alerts, get_alert, record_analyst_action
+from app.services.alert_graph import get_alert_graph
 
 router = APIRouter(prefix="/alerts", tags=["alerts"])
 
@@ -19,6 +20,31 @@ def get_alerts(status: str | None = Query(None), risk_tier: str | None = Query(N
     """List alerts for the Alert Queue, optionally filtered by status or risk tier."""
     return list_alerts(status=status, risk_tier=risk_tier)
 
+
+@router.get("/{alert_id}/graph")
+def get_alert_graph_detail(alert_id: str):
+    alert = get_alert(alert_id)
+
+    if alert is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Alert '{alert_id}' not found",
+        )
+
+    customer_id = alert.get("customer_id")
+
+    if not customer_id:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Alert '{alert_id}' has no customer_id",
+        )
+
+    graph = get_alert_graph(customer_id)
+
+    return {
+        "alert_id": alert_id,
+        **graph,
+    }
 
 @router.get("/{alert_id}")
 def get_alert_detail(alert_id: str):

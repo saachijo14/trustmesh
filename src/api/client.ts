@@ -73,6 +73,9 @@ export const takeAlertAction = (
     }),
   });
 
+export const getAlertGraph = (alertId: string) =>
+  request(`/alerts/${alertId}/graph`);
+
 /* ---------------- Rings ---------------- */
 
 export const getRings = () =>
@@ -119,3 +122,55 @@ export const evaluatePolicy = (
 
 export const getMetrics = () =>
   request("/metrics");
+
+/* ---------------- Agent Checkout ---------------- */
+
+export type CheckoutResult = {
+  risk: {
+    customer_id: string;
+    risk_score: number;
+    risk_tier: string;
+    features?: {
+      D?: number;
+      R?: number;
+      V?: number;
+      C?: number;
+      B?: number;
+      F?: number;
+    };
+  };
+
+  policy: {
+    decision: string;
+    allowed_actions: string[];
+    blocked_actions: string[];
+    reason_codes: string[];
+    recommended_action: string;
+    requires_human_approval: boolean;
+  };
+
+  trustpass: {
+    trustpass_id: string;
+    status: string;
+    allowed_actions: string[];
+    blocked_actions: string[];
+    max_permitted_amount_inr: number;
+    coupon_cap_inr: number;
+  };
+};
+
+export const evaluateCheckout = (
+  customerId: string,
+  cartId: string,
+  orderAmount: number,
+  couponCapInr = 100
+) =>
+  request<CheckoutResult>("/checkout/evaluate", {
+    method: "POST",
+    body: JSON.stringify({
+      customer_id: customerId,
+      cart_id: cartId,
+      order_amount: orderAmount,
+      coupon_cap_inr: couponCapInr,
+    }),
+  });
