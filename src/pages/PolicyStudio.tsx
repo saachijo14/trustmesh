@@ -1,227 +1,793 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import {getPolicy,updatePolicy,evaluatePolicy} from "../api/client";
+
+type PolicyConfig = {
+  max_autonomous_order_value_inr: number;
+  coupon_cap_new_account_inr: number;
+  coupon_cap_medium_risk_inr: number;
+  ring_node_threshold: number;
+  otp_max_challenges_per_window: number;
+  hold_expiry_minutes: number;
+};
+
+type PolicyResponse = {
+  policy_version: string;
+  config: PolicyConfig;
+};
+
+type EvaluationResult = {
+  customer_id: string;
+  risk_score: number;
+  risk_tier: string;
+  decision: string;
+  recommended_action: string;
+  reason_codes: string[];
+  requires_human_approval: boolean;
+};
+
+const defaultConfig: PolicyConfig = {
+  max_autonomous_order_value_inr: 50000,
+  coupon_cap_new_account_inr: 100,
+  coupon_cap_medium_risk_inr: 100,
+  ring_node_threshold: 15,
+  otp_max_challenges_per_window: 3,
+  hold_expiry_minutes: 30,
+};
 
 const versions = [
-  { id: "v2.4.1", active: true, date: "Aug 25, 2026", changes: "Tightened ring threshold to 15 nodes" },
-  { id: "v2.4.0", active: false, date: "Aug 18, 2026", changes: "Added agent checkout policy" },
-  { id: "v2.3.2", active: false, date: "Aug 10, 2026", changes: "Coupon cap reduced to 3/day" },
+  {
+    id: "v2.4.1",
+    active: true,
+    date: "Aug 25, 2026",
+    changes: "Tightened ring threshold to 15 nodes",
+  },
+  {
+    id: "v2.4.0",
+    active: false,
+    date: "Aug 18, 2026",
+    changes: "Added agent checkout policy",
+  },
+  {
+    id: "v2.3.2",
+    active: false,
+    date: "Aug 10, 2026",
+    changes: "Coupon cap reduced",
+  },
 ];
 
 export default function PolicyStudio() {
-  const [tab, setTab] = useState<"thresholds" | "rules" | "coupons" | "simulation" | "versions">("thresholds");
-  const [ringThreshold, setRingThreshold] = useState(15);
-  const [velocityMultiplier, setVelocityMultiplier] = useState(5);
-  const [couponCap, setCouponCap] = useState(3);
-  const [maxOrderValue, setMaxOrderValue] = useState(50000);
-  const [otpOnHigh, setOtpOnHigh] = useState(true);
-  const [agentCheckout, setAgentCheckout] = useState(true);
-  const [blockCritical, setBlockCritical] = useState(true);
-  const [simRisk, setSimRisk] = useState(50);
-  const [simResult, setSimResult] = useState<string | null>(null);
+  const [tab, setTab] = useState<
+    "thresholds" | "rules" | "coupons" | "simulation" | "versions"
+  >("thresholds");
+
+  const [config, setConfig] = useState<PolicyConfig>(defaultConfig);
+  const [savedConfig, setSavedConfig] =
+    useState<PolicyConfig>(defaultConfig);
+
+  const [policyVersion, setPolicyVersion] = useState("v1.0");
+
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
 
-  const simulate = () => {
-    const outcomes = [
-      simRisk > 80 ? "BLOCK — Critical risk threshold exceeded" :
-      simRisk > 60 ? "HOLD + OTP — High risk detected" :
-      simRisk > 40 ? "OTP challenge — Medium risk" :
-      "ALLOW — Low risk"
-    ];
-    setSimResult(outcomes[0]);
+  const [simCustomer, setSimCustomer] =
+    useState("ringA_customer_0");
+  const [simAmount, setSimAmount] = useState(19560);
+  const [simResult, setSimResult] =
+    useState<EvaluationResult | null>(null);
+  const [simLoading, setSimLoading] = useState(false);
+
+
+const loadPolicy = async () => {
+    try {
+      setLoading(true);
+
+      const result = (await getPolicy()) as PolicyResponse;
+
+      setPolicyVersion(result.policy_version);
+      setConfig(result.config);
+      setSavedConfig(result.config);
+    } catch (error) {
+      console.error(error);
+      setMessage("Failed to load policy configuration.");
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const save = () => {
-    setSaving(true);
-    setTimeout(() => setSaving(false), 1500);
+  useEffect(() => {
+  // The async loader updates state after the API response arrives.
+  // This is intentional because the effect synchronizes the page with backend policy state.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  void loadPolicy();
+}, []);
+
+  const save = async () => {
+    try {
+      setSaving(true);
+      setMessage(null);
+
+      const result = (await updatePolicy(config)) as PolicyResponse;
+
+      setPolicyVersion(result.policy_version);
+      setConfig(result.config);
+      setSavedConfig(result.config);
+
+      setMessage("Policy saved successfully.");
+    } catch (error) {
+      console.error(error);
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Failed to save policy."
+      );
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const tabs = ["thresholds", "rules", "coupons", "simulation", "versions"] as const;
+  const discard = () => {
+    setConfig(savedConfig);
+    setMessage("Unsaved changes discarded.");
+  };
+
+  const updateConfig = <K extends keyof PolicyConfig>(
+    key: K,
+    value: PolicyConfig[K]
+  ) => {
+    setConfig((prev) => ({
+      ...prev,
+      [key]: value,
+    }));
+    setMessage(null);
+  };
+
+  const simulate = async () => {
+    try {
+      setSimLoading(true);
+      setSimResult(null);
+      setMessage(null);
+
+      const result = (await evaluatePolicy(
+        simCustomer,
+        simAmount
+      )) as EvaluationResult;
+
+      setSimResult(result);
+    } catch (error) {
+      console.error(error);
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Simulation failed."
+      );
+    } finally {
+      setSimLoading(false);
+    }
+  };
+
+  const tabs = [
+    "thresholds",
+    "rules",
+    "coupons",
+    "simulation",
+    "versions",
+  ] as const;
 
   return (
     <div className="h-full scroll-area p-6 space-y-5">
+
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-[#e2e8f0] font-display">Policy Studio</h1>
-          <p className="text-sm text-[#64748b]">Configure risk thresholds, rules, and permissions · v2.4.1</p>
+          <h1 className="text-xl font-bold text-[#e2e8f0] font-display">
+            Policy Studio
+          </h1>
+
+          <p className="text-sm text-[#64748b]">
+            Configure risk thresholds, rules, and permissions ·{" "}
+            {policyVersion}
+          </p>
         </div>
+
         <div className="flex gap-2">
-          <button className="btn-ghost rounded-lg px-4 py-2 text-sm">Discard</button>
-          <button onClick={save} className={`btn-primary rounded-lg px-4 py-2 text-sm font-semibold flex items-center gap-2 ${saving ? "opacity-60" : ""}`}>
-            {saving ? <><div className="w-3 h-3 rounded-full border-2 border-white border-t-transparent animate-spin" />Saving…</> : "Save Policy"}
+          <button
+            onClick={discard}
+            className="btn-ghost rounded-lg px-4 py-2 text-sm"
+            disabled={saving}
+          >
+            Discard
+          </button>
+
+          <button
+            onClick={save}
+            disabled={saving || loading}
+            className={`btn-primary rounded-lg px-4 py-2 text-sm font-semibold flex items-center gap-2 ${
+              saving ? "opacity-60" : ""
+            }`}
+          >
+            {saving ? (
+              <>
+                <div className="w-3 h-3 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                Saving…
+              </>
+            ) : (
+              "Save Policy"
+            )}
           </button>
         </div>
       </div>
 
+      {/* Message */}
+      {message && (
+        <div
+          className={`rounded-lg px-4 py-3 text-xs border ${
+            message.toLowerCase().includes("failed")
+              ? "bg-[rgba(239,68,68,0.08)] border-[rgba(239,68,68,0.25)] text-[#ef4444]"
+              : "bg-[rgba(16,185,129,0.08)] border-[rgba(16,185,129,0.25)] text-[#10b981]"
+          }`}
+        >
+          {message}
+        </div>
+      )}
+
       {/* Tabs */}
       <div className="glass rounded-xl p-1 flex gap-1">
-        {tabs.map(t => (
+        {tabs.map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
             className={`flex-1 py-2 rounded-lg text-xs font-semibold capitalize transition-all ${
-              tab === t ? "bg-[rgba(99,102,241,0.2)] text-[#6366f1] border border-[rgba(99,102,241,0.3)]" : "text-[#64748b] hover:text-[#94a3b8]"
+              tab === t
+                ? "bg-[rgba(99,102,241,0.2)] text-[#6366f1] border border-[rgba(99,102,241,0.3)]"
+                : "text-[#64748b] hover:text-[#94a3b8]"
             }`}
-          >{t}</button>
+          >
+            {t}
+          </button>
         ))}
       </div>
 
       <div className="glass-card rounded-xl p-6">
+
+        {/* ================= THRESHOLDS ================= */}
         {tab === "thresholds" && (
-          <div className="grid grid-cols-2 gap-8">
-            <div className="space-y-6">
-              <SliderControl label="Ring Node Threshold" value={ringThreshold} min={5} max={50} onChange={setRingThreshold}
-                description="Alert when ring exceeds this many nodes" unit=" nodes" color="#ef4444" />
-              <SliderControl label="Velocity Multiplier" value={velocityMultiplier} min={2} max={20} onChange={setVelocityMultiplier}
-                description="Flag orders exceeding baseline velocity by this factor" unit="×" color="#f97316" />
-              <SliderControl label="Max Order Value" value={maxOrderValue} min={1000} max={200000} onChange={setMaxOrderValue}
-                description="Block orders above this amount without additional verification" unit="₹" color="#8b5cf6" step={1000} prefix />
-            </div>
-            <div className="space-y-6">
-              <SliderControl label="Coupon Daily Cap" value={couponCap} min={1} max={10} onChange={setCouponCap}
-                description="Maximum coupon uses per entity per day" unit=" uses" color="#10b981" />
-              <SliderControl label="ML Score Block Threshold" value={85} min={50} max={100} onChange={() => {}}
-                description="Auto-block orders above this risk score" unit="" color="#6366f1" />
-              <SliderControl label="FP Review Cooldown" value={24} min={1} max={168} onChange={() => {}}
-                description="Hours before a false-positive entity is auto-cleared" unit="h" color="#06b6d4" />
-            </div>
-          </div>
+          <>
+            {loading ? (
+              <div className="py-16 text-center text-sm text-[#64748b]">
+                Loading policy configuration…
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-8">
+
+                <div className="space-y-6">
+
+                  <SliderControl
+                    label="Ring Node Threshold"
+                    value={config.ring_node_threshold}
+                    min={5}
+                    max={50}
+                    onChange={(v) =>
+                      updateConfig("ring_node_threshold", v)
+                    }
+                    description="Minimum detected ring size used by policy controls"
+                    unit=" nodes"
+                    color="#ef4444"
+                  />
+
+                  <SliderControl
+                    label="Max Autonomous Order Value"
+                    value={config.max_autonomous_order_value_inr}
+                    min={1000}
+                    max={200000}
+                    step={1000}
+                    onChange={(v) =>
+                      updateConfig(
+                        "max_autonomous_order_value_inr",
+                        v
+                      )
+                    }
+                    description="Orders above this amount cannot be autonomously approved"
+                    unit="₹"
+                    color="#8b5cf6"
+                    prefix
+                  />
+
+                  <SliderControl
+                    label="Hold Expiry"
+                    value={config.hold_expiry_minutes}
+                    min={5}
+                    max={120}
+                    onChange={(v) =>
+                      updateConfig("hold_expiry_minutes", v)
+                    }
+                    description="Minutes before a held case expires"
+                    unit=" min"
+                    color="#f97316"
+                  />
+
+                </div>
+
+                <div className="space-y-6">
+
+                  <SliderControl
+                    label="New Account Coupon Cap"
+                    value={config.coupon_cap_new_account_inr}
+                    min={0}
+                    max={500}
+                    step={10}
+                    onChange={(v) =>
+                      updateConfig(
+                        "coupon_cap_new_account_inr",
+                        v
+                      )
+                    }
+                    description="Maximum coupon value permitted for new accounts"
+                    unit="₹"
+                    color="#10b981"
+                    prefix
+                  />
+
+                  <SliderControl
+                    label="Medium Risk Coupon Cap"
+                    value={config.coupon_cap_medium_risk_inr}
+                    min={0}
+                    max={500}
+                    step={10}
+                    onChange={(v) =>
+                      updateConfig(
+                        "coupon_cap_medium_risk_inr",
+                        v
+                      )
+                    }
+                    description="Maximum coupon value permitted for medium-risk orders"
+                    unit="₹"
+                    color="#06b6d4"
+                    prefix
+                  />
+
+                  <SliderControl
+                    label="OTP Challenge Limit"
+                    value={config.otp_max_challenges_per_window}
+                    min={1}
+                    max={10}
+                    onChange={(v) =>
+                      updateConfig(
+                        "otp_max_challenges_per_window",
+                        v
+                      )
+                    }
+                    description="Maximum OTP challenges allowed within the policy window"
+                    unit=" attempts"
+                    color="#6366f1"
+                  />
+
+                </div>
+              </div>
+            )}
+          </>
         )}
 
+        {/* ================= RULES ================= */}
         {tab === "rules" && (
           <div className="space-y-3">
-            {[
-              { name: "Auto-block on critical ring", desc: "Immediately block orders from CRITICAL ring nodes", state: blockCritical, set: setBlockCritical, impact: "HIGH" },
-              { name: "OTP challenge on HIGH risk", desc: "Require OTP for orders with risk score 60–80", state: otpOnHigh, set: setOtpOnHigh, impact: "MEDIUM" },
-              { name: "Allow agent-led checkout", desc: "Permit orders placed by AI buyer agents", state: agentCheckout, set: setAgentCheckout, impact: "HIGH" },
-              { name: "Cascade ring block", desc: "Block entire ring when 3+ nodes hit CRITICAL", state: true, set: () => {}, impact: "HIGH" },
-              { name: "Auto-assign analyst", desc: "Assign unreviewed alerts to available analyst", state: true, set: () => {}, impact: "LOW" },
-              { name: "Escalate after 30min", desc: "Auto-escalate OPEN critical alerts after 30 minutes", state: false, set: () => {}, impact: "MEDIUM" },
-            ].map(r => (
-              <div key={r.name} className="flex items-center gap-4 p-4 rounded-xl bg-[rgba(13,18,40,0.5)] border border-[rgba(99,102,241,0.1)] hover:border-[rgba(99,102,241,0.2)] transition-all">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-[#e2e8f0]">{r.name}</span>
-                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded font-mono ${r.impact === "HIGH" ? "badge-high" : r.impact === "MEDIUM" ? "badge-medium" : "badge-low"}`}>{r.impact}</span>
-                  </div>
-                  <div className="text-xs text-[#64748b] mt-0.5">{r.desc}</div>
-                </div>
-                <div
-                  onClick={() => r.set(!r.state)}
-                  className={`w-10 h-5 rounded-full relative transition-colors cursor-pointer shrink-0 ${r.state ? "bg-[#6366f1]" : "bg-[rgba(99,102,241,0.15)]"}`}
-                >
-                  <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all shadow ${r.state ? "left-5" : "left-0.5"}`} />
-                </div>
-              </div>
-            ))}
+
+            <RuleRow
+              name="Autonomous order value limit"
+              desc={`Orders above ₹${config.max_autonomous_order_value_inr.toLocaleString()} require additional intervention`}
+              state={true}
+              impact="HIGH"
+            />
+
+            <RuleRow
+              name="Ring association detection"
+              desc={`Detected ring threshold: ${config.ring_node_threshold} nodes`}
+              state={true}
+              impact="HIGH"
+            />
+
+            <RuleRow
+              name="OTP challenge protection"
+              desc={`Maximum ${config.otp_max_challenges_per_window} OTP challenges per window`}
+              state={true}
+              impact="MEDIUM"
+            />
+
+            <RuleRow
+              name="Medium-risk coupon restriction"
+              desc={`Coupon cap: ₹${config.coupon_cap_medium_risk_inr.toLocaleString()}`}
+              state={true}
+              impact="MEDIUM"
+            />
+
+            <RuleRow
+              name="New-account coupon restriction"
+              desc={`Coupon cap: ₹${config.coupon_cap_new_account_inr.toLocaleString()}`}
+              state={true}
+              impact="HIGH"
+            />
+
+            <RuleRow
+              name="Human review hold expiry"
+              desc={`Held cases expire after ${config.hold_expiry_minutes} minutes`}
+              state={true}
+              impact="LOW"
+            />
+
           </div>
         )}
 
+        {/* ================= COUPONS ================= */}
         {tab === "coupons" && (
           <div className="space-y-4">
-            <div className="text-sm text-[#94a3b8] mb-4">Configure coupon-level risk policies and usage caps.</div>
-            {[
-              { code: "SAVE40", cap: 3, value: "40%", status: "ACTIVE", uses: 9, risk: "HIGH" },
-              { code: "WELCOME50", cap: 1, value: "50%", status: "RESTRICTED", uses: 12, risk: "CRITICAL" },
-              { code: "FLAT200", cap: 5, value: "₹200", status: "ACTIVE", uses: 2, risk: "LOW" },
-              { code: "REFERRAL10", cap: 10, value: "10%", status: "ACTIVE", uses: 1, risk: "LOW" },
-            ].map(c => (
-              <div key={c.code} className="flex items-center gap-4 p-4 rounded-xl bg-[rgba(13,18,40,0.5)] border border-[rgba(99,102,241,0.1)]">
-                <div className="font-mono text-[#10b981] font-bold text-sm w-28">{c.code}</div>
-                <div className="flex-1 grid grid-cols-3 gap-4 text-xs">
-                  <div><span className="text-[#64748b]">Value: </span><span className="text-[#e2e8f0] font-mono">{c.value}</span></div>
-                  <div><span className="text-[#64748b]">Cap/day: </span><span className="text-[#e2e8f0] font-mono">{c.cap}</span></div>
-                  <div><span className="text-[#64748b]">Today: </span><span className={`font-mono font-bold ${c.uses > c.cap ? "text-[#ef4444]" : "text-[#10b981]"}`}>{c.uses}</span></div>
-                </div>
-                <span className={`text-[9px] font-bold px-2 py-0.5 rounded font-mono ${c.risk === "CRITICAL" ? "badge-critical" : c.risk === "HIGH" ? "badge-high" : "badge-low"}`}>{c.risk}</span>
-                <span className={`text-[9px] font-bold px-2 py-0.5 rounded font-mono ${c.status === "RESTRICTED" ? "badge-critical" : "badge-low"}`}>{c.status}</span>
-              </div>
-            ))}
+
+            <div className="text-sm text-[#94a3b8] mb-4">
+              Live policy limits used by the backend policy engine.
+            </div>
+
+            <CouponRow
+              title="New Account"
+              description="Maximum coupon value for new accounts"
+              value={config.coupon_cap_new_account_inr}
+              color="#10b981"
+            />
+
+            <CouponRow
+              title="Medium Risk"
+              description="Maximum coupon value for medium-risk customers"
+              value={config.coupon_cap_medium_risk_inr}
+              color="#06b6d4"
+            />
+
+            <CouponRow
+              title="OTP Challenges"
+              description="Maximum verification attempts per policy window"
+              value={config.otp_max_challenges_per_window}
+              color="#6366f1"
+              suffix=" attempts"
+            />
+
+            <CouponRow
+              title="Ring Threshold"
+              description="Configured ring-node threshold"
+              value={config.ring_node_threshold}
+              color="#ef4444"
+              suffix=" nodes"
+            />
+
           </div>
         )}
 
+        {/* ================= SIMULATION ================= */}
         {tab === "simulation" && (
-          <div className="max-w-lg mx-auto space-y-6">
+          <div className="max-w-xl mx-auto space-y-5">
+
+            <div>
+              <label className="text-xs text-[#64748b]">
+                Customer ID
+              </label>
+
+              <input
+                value={simCustomer}
+                onChange={(e) =>
+                  setSimCustomer(e.target.value)
+                }
+                placeholder="e.g. ringA_customer_0"
+                className="mt-2 w-full bg-[rgba(13,18,40,0.8)] border border-[rgba(99,102,241,0.2)] rounded-lg px-3 py-2 text-sm font-mono text-[#e2e8f0] placeholder:text-[#64748b] focus:outline-none focus:border-[#6366f1]"
+              />
+            </div>
+
             <div>
               <div className="flex justify-between text-sm mb-2">
-                <span className="text-[#e2e8f0] font-medium">Simulated Risk Score</span>
-                <span className="font-mono font-bold text-[#6366f1]">{simRisk}</span>
+                <span className="text-[#e2e8f0] font-medium">
+                  Order Amount
+                </span>
+
+                <span className="font-mono font-bold text-[#6366f1]">
+                  ₹{simAmount.toLocaleString()}
+                </span>
               </div>
-              <input type="range" min={0} max={100} value={simRisk} onChange={e => setSimRisk(+e.target.value)}
-                className="w-full accent-[#6366f1]" />
-              <div className="flex justify-between text-[10px] text-[#64748b] mt-1">
-                <span>Low</span><span>Medium</span><span>High</span><span>Critical</span>
-              </div>
+
+              <input
+                type="range"
+                min={1000}
+                max={100000}
+                step={500}
+                value={simAmount}
+                onChange={(e) =>
+                  setSimAmount(Number(e.target.value))
+                }
+                className="w-full accent-[#6366f1]"
+              />
             </div>
-            <div className="grid grid-cols-2 gap-3 text-xs">
-              <label className="flex items-center gap-2 p-3 rounded-lg bg-[rgba(13,18,40,0.5)] cursor-pointer">
-                <input type="checkbox" defaultChecked className="accent-[#6366f1]" />
-                <span className="text-[#94a3b8]">Ring association</span>
-              </label>
-              <label className="flex items-center gap-2 p-3 rounded-lg bg-[rgba(13,18,40,0.5)] cursor-pointer">
-                <input type="checkbox" className="accent-[#6366f1]" />
-                <span className="text-[#94a3b8]">Agent-led order</span>
-              </label>
-              <label className="flex items-center gap-2 p-3 rounded-lg bg-[rgba(13,18,40,0.5)] cursor-pointer">
-                <input type="checkbox" className="accent-[#6366f1]" />
-                <span className="text-[#94a3b8]">Coupon cap exceeded</span>
-              </label>
-              <label className="flex items-center gap-2 p-3 rounded-lg bg-[rgba(13,18,40,0.5)] cursor-pointer">
-                <input type="checkbox" className="accent-[#6366f1]" />
-                <span className="text-[#94a3b8]">New address</span>
-              </label>
-            </div>
-            <button onClick={simulate} className="w-full btn-primary rounded-xl py-3 font-semibold">Run Simulation</button>
+
+            <button
+              onClick={simulate}
+              disabled={simLoading || !simCustomer.trim()}
+              className={`w-full btn-primary rounded-xl py-3 font-semibold ${
+                simLoading ? "opacity-60" : ""
+              }`}
+            >
+              {simLoading ? "Evaluating…" : "Run Backend Simulation"}
+            </button>
+
             {simResult && (
-              <div className={`p-4 rounded-xl border text-sm font-semibold text-center ${
-                simResult.startsWith("BLOCK") ? "bg-[rgba(239,68,68,0.1)] border-[rgba(239,68,68,0.3)] text-[#ef4444]" :
-                simResult.startsWith("HOLD") ? "bg-[rgba(245,158,11,0.1)] border-[rgba(245,158,11,0.3)] text-[#f59e0b]" :
-                simResult.startsWith("OTP") ? "bg-[rgba(6,182,212,0.1)] border-[rgba(6,182,212,0.3)] text-[#06b6d4]" :
-                "bg-[rgba(16,185,129,0.1)] border-[rgba(16,185,129,0.3)] text-[#10b981]"
-              }`}>{simResult}</div>
+              <div className="rounded-xl border border-[rgba(99,102,241,0.25)] bg-[rgba(99,102,241,0.06)] p-5 space-y-4">
+
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-[#64748b]">
+                    Risk Score
+                  </span>
+
+                  <span className="text-xl font-bold font-mono text-[#f59e0b]">
+                    {simResult.risk_score}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-[#64748b]">
+                    Risk Tier
+                  </span>
+
+                  <span className="text-xs font-bold font-mono text-[#f59e0b]">
+                    {simResult.risk_tier.toUpperCase()}
+                  </span>
+                </div>
+
+                <div className="border-t border-[rgba(99,102,241,0.1)] pt-4">
+
+                  <div className="text-[10px] uppercase tracking-wider text-[#64748b] mb-1">
+                    Decision
+                  </div>
+
+                  <div className="text-lg font-bold text-[#e2e8f0]">
+                    {simResult.decision}
+                  </div>
+
+                </div>
+
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-[#64748b] mb-1">
+                    Recommended Action
+                  </div>
+
+                  <div className="text-sm font-semibold text-[#06b6d4]">
+                    {simResult.recommended_action}
+                  </div>
+                </div>
+
+                {simResult.reason_codes?.length > 0 && (
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wider text-[#64748b] mb-2">
+                      Reason Codes
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      {simResult.reason_codes.map((reason) => (
+                        <span
+                          key={reason}
+                          className="text-[9px] px-2 py-1 rounded border border-[rgba(99,102,241,0.2)] bg-[rgba(99,102,241,0.08)] text-[#94a3b8]"
+                        >
+                          {reason}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="text-[10px] text-[#64748b]">
+                  Human approval:{" "}
+                  <span className="text-[#e2e8f0] font-semibold">
+                    {simResult.requires_human_approval
+                      ? "Required"
+                      : "Not required"}
+                  </span>
+                </div>
+
+              </div>
             )}
+
           </div>
         )}
 
+        {/* ================= VERSIONS ================= */}
         {tab === "versions" && (
           <div className="space-y-3">
-            {versions.map(v => (
-              <div key={v.id} className={`flex items-center gap-4 p-4 rounded-xl border transition-all ${v.active ? "bg-[rgba(99,102,241,0.08)] border-[rgba(99,102,241,0.3)]" : "bg-[rgba(13,18,40,0.5)] border-[rgba(99,102,241,0.1)]"}`}>
-                <div className="font-mono text-[#6366f1] font-bold text-sm w-16">{v.id}</div>
-                <div className="flex-1">
-                  <div className="text-xs text-[#e2e8f0]">{v.changes}</div>
-                  <div className="text-[10px] text-[#64748b] mt-0.5">{v.date}</div>
+
+            {versions.map((v) => (
+              <div
+                key={v.id}
+                className={`flex items-center gap-4 p-4 rounded-xl border transition-all ${
+                  v.active
+                    ? "bg-[rgba(99,102,241,0.08)] border-[rgba(99,102,241,0.3)]"
+                    : "bg-[rgba(13,18,40,0.5)] border-[rgba(99,102,241,0.1)]"
+                }`}
+              >
+                <div className="font-mono text-[#6366f1] font-bold text-sm w-16">
+                  {v.id}
                 </div>
-                {v.active
-                  ? <span className="badge-low text-[9px] font-bold px-2 py-0.5 rounded font-mono">ACTIVE</span>
-                  : <button className="btn-ghost rounded-lg px-3 py-1.5 text-xs">Rollback</button>
-                }
+
+                <div className="flex-1">
+                  <div className="text-xs text-[#e2e8f0]">
+                    {v.changes}
+                  </div>
+
+                  <div className="text-[10px] text-[#64748b] mt-0.5">
+                    {v.date}
+                  </div>
+                </div>
+
+                {v.active ? (
+                  <span className="badge-low text-[9px] font-bold px-2 py-0.5 rounded font-mono">
+                    ACTIVE
+                  </span>
+                ) : (
+                  <button className="btn-ghost rounded-lg px-3 py-1.5 text-xs">
+                    Rollback
+                  </button>
+                )}
               </div>
             ))}
+
           </div>
         )}
+
       </div>
     </div>
   );
 }
 
-function SliderControl({ label, value, min, max, onChange, description, unit, color, step = 1, prefix = false }: {
-  label: string; value: number; min: number; max: number; onChange: (v: number) => void;
-  description: string; unit: string; color: string; step?: number; prefix?: boolean;
+/* ================= COMPONENTS ================= */
+
+function SliderControl({
+  label,
+  value,
+  min,
+  max,
+  onChange,
+  description,
+  unit,
+  color,
+  step = 1,
+  prefix = false,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  onChange: (v: number) => void;
+  description: string;
+  unit: string;
+  color: string;
+  step?: number;
+  prefix?: boolean;
 }) {
   return (
     <div>
       <div className="flex justify-between items-center mb-1">
-        <div className="text-sm font-medium text-[#e2e8f0]">{label}</div>
-        <div className="font-mono text-sm font-bold" style={{ color }}>
-          {prefix ? unit : ""}{value.toLocaleString()}{!prefix ? unit : ""}
+        <div className="text-sm font-medium text-[#e2e8f0]">
+          {label}
+        </div>
+
+        <div
+          className="font-mono text-sm font-bold"
+          style={{ color }}
+        >
+          {prefix ? unit : ""}
+          {value.toLocaleString()}
+          {!prefix ? unit : ""}
         </div>
       </div>
+
       <input
-        type="range" min={min} max={max} value={value} step={step}
-        onChange={e => onChange(+e.target.value)}
+        type="range"
+        min={min}
+        max={max}
+        value={value}
+        step={step}
+        onChange={(e) => onChange(Number(e.target.value))}
         className="w-full"
         style={{ accentColor: color }}
       />
-      <div className="text-[10px] text-[#64748b] mt-0.5">{description}</div>
+
+      <div className="text-[10px] text-[#64748b] mt-0.5">
+        {description}
+      </div>
+    </div>
+  );
+}
+
+function RuleRow({
+  name,
+  desc,
+  state,
+  impact,
+}: {
+  name: string;
+  desc: string;
+  state: boolean;
+  impact: "HIGH" | "MEDIUM" | "LOW";
+}) {
+  return (
+    <div className="flex items-center gap-4 p-4 rounded-xl bg-[rgba(13,18,40,0.5)] border border-[rgba(99,102,241,0.1)]">
+
+      <div className="flex-1">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium text-[#e2e8f0]">
+            {name}
+          </span>
+
+          <span
+            className={`text-[9px] font-bold px-1.5 py-0.5 rounded font-mono ${
+              impact === "HIGH"
+                ? "badge-high"
+                : impact === "MEDIUM"
+                ? "badge-medium"
+                : "badge-low"
+            }`}
+          >
+            {impact}
+          </span>
+        </div>
+
+        <div className="text-xs text-[#64748b] mt-0.5">
+          {desc}
+        </div>
+      </div>
+
+      <div
+        className={`w-10 h-5 rounded-full relative shrink-0 ${
+          state
+            ? "bg-[#6366f1]"
+            : "bg-[rgba(99,102,241,0.15)]"
+        }`}
+      >
+        <div
+          className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow ${
+            state ? "left-5" : "left-0.5"
+          }`}
+        />
+      </div>
+
+    </div>
+  );
+}
+
+function CouponRow({
+  title,
+  description,
+  value,
+  color,
+  suffix = "₹",
+}: {
+  title: string;
+  description: string;
+  value: number;
+  color: string;
+  suffix?: string;
+}) {
+  return (
+    <div className="flex items-center gap-4 p-4 rounded-xl bg-[rgba(13,18,40,0.5)] border border-[rgba(99,102,241,0.1)]">
+
+      <div className="flex-1">
+        <div className="text-sm font-medium text-[#e2e8f0]">
+          {title}
+        </div>
+
+        <div className="text-xs text-[#64748b] mt-1">
+          {description}
+        </div>
+      </div>
+
+      <div
+        className="font-mono font-bold text-lg"
+        style={{ color }}
+      >
+        {suffix === "₹" ? "₹" : ""}
+        {value.toLocaleString()}
+        {suffix !== "₹" ? suffix : ""}
+      </div>
+
     </div>
   );
 }
