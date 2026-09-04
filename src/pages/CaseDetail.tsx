@@ -89,6 +89,8 @@ const nodeTypeColor: Record<string, string> = {
   Address: "#f97316",
   Coupon: "#10b981",
   Payment: "#64748b",
+  RefundDestination: "#ec4899",
+  Order: "#06b6d4",
 };
 
 const riskColor = (score: number) => {
@@ -156,6 +158,18 @@ const formatDateTime = (timestamp: string) => {
   return date.toLocaleString("en-IN");
 };
 
+const formatPropertyValue = (value: unknown) => {
+  if (value === null || value === undefined) {
+    return "—";
+  }
+
+  if (typeof value === "object") {
+    return JSON.stringify(value);
+  }
+
+  return String(value);
+};
+
 export default function CaseDetail() {
   const { alertId } = useParams<{ alertId: string }>();
   const navigate = useNavigate();
@@ -170,7 +184,7 @@ export default function CaseDetail() {
   const [submitted, setSubmitted] = useState(false);
 
   const [activeTab, setActiveTab] =
-    useState<"evidence" | "entities" | "similar">("evidence");
+    useState<"evidence" | "entities">("evidence");
 
   const [loading, setLoading] = useState(true);
 
@@ -181,19 +195,16 @@ export default function CaseDetail() {
   const [actionError, setActionError] =
     useState<string | null>(null);
 
+  const [graph, setGraph] = useState<AlertGraph | null>(null);
+
+  const [graphLoading, setGraphLoading] = useState(true);
+
+  const [graphError, setGraphError] = useState<string | null>(null);
+
   const chosen = actions.find(
     (action) => action.label === selectedAction
   );
 
-const [graph, setGraph] = useState<AlertGraph | null>(null);
-
-const [graphLoading, setGraphLoading] = useState(true);
-
-const [graphError, setGraphError] = useState<string | null>(null);
-
-  /*
-   * Load the real alert from FastAPI.
-   */
   useEffect(() => {
     const loadAlert = async () => {
       if (!alertId) {
@@ -225,38 +236,35 @@ const [graphError, setGraphError] = useState<string | null>(null);
     loadAlert();
   }, [alertId]);
 
-useEffect(() => {
-  const loadGraph = async () => {
-    if (!alertId) {
-      return;
-    }
+  useEffect(() => {
+    const loadGraph = async () => {
+      if (!alertId) {
+        return;
+      }
 
-    try {
-      setGraphLoading(true);
-      setGraphError(null);
+      try {
+        setGraphLoading(true);
+        setGraphError(null);
 
-      const result = await getAlertGraph(alertId);
+        const result = await getAlertGraph(alertId);
 
-      setGraph(result as AlertGraph);
-    } catch (err) {
-      console.error("Alert graph API error:", err);
+        setGraph(result as AlertGraph);
+      } catch (err) {
+        console.error("Alert graph API error:", err);
 
-      setGraphError(
-        err instanceof Error
-          ? err.message
-          : "Failed to load entity graph."
-      );
-    } finally {
-      setGraphLoading(false);
-    }
-  };
+        setGraphError(
+          err instanceof Error
+            ? err.message
+            : "Failed to load entity graph."
+        );
+      } finally {
+        setGraphLoading(false);
+      }
+    };
 
-  loadGraph();
-}, [alertId]);
+    loadGraph();
+  }, [alertId]);
 
-  /*
-   * Submit an actual analyst action to FastAPI.
-   */
   const handleSubmit = async () => {
     if (!alertId || !chosen || !alert) {
       return;
@@ -277,10 +285,6 @@ useEffect(() => {
         reason.trim()
       );
 
-      /*
-       * Fetch the alert again so the UI reflects the
-       * actual state stored by the backend.
-       */
       const updatedAlert = await getAlert(alertId);
 
       setAlert(updatedAlert as Alert);
@@ -305,11 +309,6 @@ useEffect(() => {
     }
   };
 
-
-  
-  /*
-   * Loading state.
-   */
   if (loading) {
     return (
       <div className="h-full flex items-center justify-center">
@@ -321,9 +320,6 @@ useEffect(() => {
     );
   }
 
-  /*
-   * Error / missing alert state.
-   */
   if (error || !alert) {
     return (
       <div className="h-full flex items-center justify-center p-6">
@@ -349,11 +345,15 @@ useEffect(() => {
     );
   }
 
+  const entityCounts =
+    graph?.nodes.reduce<Record<string, number>>((counts, node) => {
+      counts[node.type] = (counts[node.type] || 0) + 1;
+      return counts;
+    }, {}) || {};
+
   return (
     <div className="h-full scroll-area p-6 space-y-5">
-      {/* =========================================================
-          Breadcrumb
-      ========================================================= */}
+      {/* Breadcrumb */}
       <div className="flex items-center gap-2 text-sm">
         <button
           onClick={() => navigate("/alerts")}
@@ -393,13 +393,9 @@ useEffect(() => {
       </div>
 
       <div className="grid grid-cols-3 gap-5">
-        {/* =======================================================
-            LEFT COLUMN
-        ======================================================= */}
+        {/* LEFT COLUMN */}
         <div className="col-span-2 space-y-4">
-          {/* =====================================================
-              Alert Summary
-          ===================================================== */}
+          {/* Alert Summary */}
           <div className="glass-card rounded-xl p-5">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-semibold text-[#e2e8f0]">
@@ -457,9 +453,7 @@ useEffect(() => {
               </div>
 
               <div>
-                <div className="text-[#64748b]">
-                  Exposure
-                </div>
+                <div className="text-[#64748b]">Exposure</div>
                 <div className="text-[#e2e8f0] font-mono mt-0.5">
                   {formatINR(alert.exposure_inr)}
                 </div>
@@ -469,24 +463,23 @@ useEffect(() => {
                 <div className="text-[#64748b]">
                   Recommended Action
                 </div>
+
                 <div className="text-[#06b6d4] font-mono mt-0.5">
                   {alert.rec_action}
                 </div>
               </div>
 
               <div>
-                <div className="text-[#64748b]">
-                  Assignee
-                </div>
+                <div className="text-[#64748b]">Assignee</div>
+
                 <div className="text-[#e2e8f0] font-mono mt-0.5">
                   {alert.assignee || "Unassigned"}
                 </div>
               </div>
 
               <div>
-                <div className="text-[#64748b]">
-                  Created
-                </div>
+                <div className="text-[#64748b]">Created</div>
+
                 <div className="text-[#e2e8f0] font-mono mt-0.5">
                   {formatDateTime(alert.created_at)}
                 </div>
@@ -494,9 +487,7 @@ useEffect(() => {
             </div>
           </div>
 
-          {/* =====================================================
-              Risk Score + Signals
-          ===================================================== */}
+          {/* Risk Score + Signals */}
           <div className="glass-card rounded-xl p-5">
             <div className="flex items-center gap-4 mb-5">
               <div
@@ -570,14 +561,10 @@ useEffect(() => {
             </div>
           </div>
 
-          {/* =====================================================
-              Tabs
-          ===================================================== */}
+          {/* Tabs */}
           <div className="glass-card rounded-xl overflow-hidden">
             <div className="flex border-b border-[rgba(99,102,241,0.15)]">
-              {(
-                ["evidence", "entities", "similar"] as const
-              ).map((tab) => (
+              {(["evidence", "entities"] as const).map((tab) => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
@@ -587,18 +574,15 @@ useEffect(() => {
                       : "text-[#64748b] hover:text-[#94a3b8]"
                   }`}
                 >
-                  {tab === "similar"
-                    ? "Similar Cases"
-                    : tab.charAt(0).toUpperCase() +
-                      tab.slice(1)}
+                  {tab === "evidence"
+                    ? "Evidence"
+                    : "Entities"}
                 </button>
               ))}
             </div>
 
             <div className="p-5">
-              {/* =================================================
-                  Evidence
-              ================================================= */}
+              {/* Evidence */}
               {activeTab === "evidence" && (
                 <div className="space-y-4 text-xs text-[#94a3b8] leading-relaxed">
                   <div>
@@ -665,9 +649,7 @@ useEffect(() => {
                     <p className="mt-2">
                       The associated exposure is{" "}
                       <span className="text-[#f97316] font-semibold">
-                        {formatINR(
-                          alert.exposure_inr
-                        )}
+                        {formatINR(alert.exposure_inr)}
                       </span>
                       .
                     </p>
@@ -675,85 +657,214 @@ useEffect(() => {
                 </div>
               )}
 
-              {/* =================================================
-                  Entities
-              ================================================= */}
+              {/* Entities */}
               {activeTab === "entities" && (
-                <div className="space-y-3">
-                  <div className="text-xs text-[#64748b] mb-3">
-                    Entity-level evidence will be connected to
-                    the graph backend in the next integration
-                    step.
-                  </div>
-
-                  <div className="flex items-center gap-3 p-3 rounded-lg bg-[rgba(13,18,40,0.5)]">
-                    <div
-                      className="w-2 h-2 rounded-full"
-                      style={{
-                        background:
-                          nodeTypeColor.Customer,
-                      }}
-                    />
-
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className="text-[9px] font-semibold"
-                          style={{
-                            color:
-                              nodeTypeColor.Customer,
-                          }}
-                        >
-                          Customer
-                        </span>
-
-                        <span className="text-[#6366f1] font-mono text-[10px]">
-                          {alert.customer_id ||
-                            "UNKNOWN"}
-                        </span>
+                <div className="space-y-4">
+                  {graphLoading ? (
+                    <div className="py-8 flex items-center justify-center text-xs text-[#64748b]">
+                      <div className="w-4 h-4 mr-2 rounded-full border-2 border-[#6366f1] border-t-transparent animate-spin" />
+                      Loading entity evidence…
+                    </div>
+                  ) : graphError ? (
+                    <div className="p-4 rounded-lg border border-[rgba(239,68,68,0.2)] bg-[rgba(239,68,68,0.05)]">
+                      <div className="text-xs font-semibold text-[#ef4444]">
+                        Entity evidence unavailable
                       </div>
 
-                      <div className="text-[#94a3b8] text-[11px]">
-                        Alert subject
+                      <div className="text-[10px] text-[#64748b] mt-1">
+                        {graphError}
                       </div>
                     </div>
-                  </div>
+                  ) : graph ? (
+                    <>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        <div className="p-3 rounded-lg bg-[rgba(13,18,40,0.6)]">
+                          <div className="text-[9px] text-[#64748b]">
+                            Nodes
+                          </div>
 
-                  <div className="p-3 rounded-lg border border-dashed border-[rgba(99,102,241,0.15)] text-xs text-[#64748b]">
-                    Device, coupon, refund destination and
-                    other graph entities will appear here once
-                    the corresponding evidence endpoint is
-                    exposed by the backend.
-                  </div>
-                </div>
-              )}
+                          <div className="text-lg font-mono font-semibold text-[#e2e8f0]">
+                            {graph.summary.node_count}
+                          </div>
+                        </div>
 
-              {/* =================================================
-                  Similar Cases
-              ================================================= */}
-              {activeTab === "similar" && (
-                <div className="p-4 rounded-lg border border-dashed border-[rgba(99,102,241,0.15)] text-center">
-                  <div className="text-[#94a3b8] text-xs">
-                    Similar-case analysis is not connected yet.
-                  </div>
+                        <div className="p-3 rounded-lg bg-[rgba(13,18,40,0.6)]">
+                          <div className="text-[9px] text-[#64748b]">
+                            Relationships
+                          </div>
 
-                  <div className="text-[#64748b] text-[10px] mt-1">
-                    This will be powered by historical alert
-                    similarity in a later backend step.
-                  </div>
+                          <div className="text-lg font-mono font-semibold text-[#e2e8f0]">
+                            {graph.summary.edge_count}
+                          </div>
+                        </div>
+
+                        <div className="p-3 rounded-lg bg-[rgba(13,18,40,0.6)]">
+                          <div className="text-[9px] text-[#64748b]">
+                            Shared Customers
+                          </div>
+
+                          <div className="text-lg font-mono font-semibold text-[#e2e8f0]">
+                            {graph.summary.shared_customer_count}
+                          </div>
+                        </div>
+
+                        <div className="p-3 rounded-lg bg-[rgba(13,18,40,0.6)]">
+                          <div className="text-[9px] text-[#64748b]">
+                            Ring
+                          </div>
+
+                          <div className="text-sm font-mono font-semibold text-[#f59e0b] mt-1">
+                            {graph.summary.ring_id || "None"}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="text-xs font-semibold text-[#e2e8f0] mb-2">
+                          Entity Types
+                        </div>
+
+                        <div className="flex flex-wrap gap-2">
+                          {Object.entries(entityCounts).map(
+                            ([type, count]) => (
+                              <div
+                                key={type}
+                                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[rgba(13,18,40,0.6)] border border-[rgba(99,102,241,0.1)]"
+                              >
+                                <div
+                                  className="w-2 h-2 rounded-full"
+                                  style={{
+                                    background:
+                                      nodeTypeColor[type] ||
+                                      "#6366f1",
+                                  }}
+                                />
+
+                                <span className="text-[10px] text-[#94a3b8]">
+                                  {type}
+                                </span>
+
+                                <span className="text-[10px] font-mono font-semibold text-[#e2e8f0]">
+                                  {count}
+                                </span>
+                              </div>
+                            )
+                          )}
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="text-xs font-semibold text-[#e2e8f0] mb-2">
+                          Connected Entities
+                        </div>
+
+                        <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                          {graph.nodes.map((node) => (
+                            <div
+                              key={node.id}
+                              className="p-3 rounded-lg bg-[rgba(13,18,40,0.5)] border border-[rgba(99,102,241,0.08)]"
+                            >
+                              <div className="flex items-center gap-2">
+                                <div
+                                  className="w-2 h-2 rounded-full"
+                                  style={{
+                                    background:
+                                      nodeTypeColor[node.type] ||
+                                      "#6366f1",
+                                  }}
+                                />
+
+                                <span
+                                  className="text-[9px] font-semibold"
+                                  style={{
+                                    color:
+                                      nodeTypeColor[node.type] ||
+                                      "#6366f1",
+                                  }}
+                                >
+                                  {node.type}
+                                </span>
+
+                                <span className="text-[10px] font-mono text-[#e2e8f0] truncate">
+                                  {node.label}
+                                </span>
+                              </div>
+
+                              {Object.keys(node.properties).length > 0 && (
+                                <div className="mt-2 flex flex-wrap gap-1.5">
+                                  {Object.entries(
+                                    node.properties
+                                  )
+                                    .slice(0, 4)
+                                    .map(
+                                      ([key, value]) => (
+                                        <span
+                                          key={key}
+                                          className="text-[8px] px-2 py-1 rounded bg-[rgba(99,102,241,0.06)] text-[#64748b] font-mono"
+                                        >
+                                          {key}:{" "}
+                                          {formatPropertyValue(
+                                            value
+                                          )}
+                                        </span>
+                                      )
+                                    )}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="text-xs font-semibold text-[#e2e8f0] mb-2">
+                          Relationships
+                        </div>
+
+                        <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                          {graph.edges.map((edge, index) => (
+                            <div
+                              key={`${edge.source}-${edge.target}-${edge.relationship}-${index}`}
+                              className="flex items-center gap-2 text-[9px] font-mono"
+                            >
+                              <span className="text-[#6366f1] truncate max-w-[35%]">
+                                {edge.source}
+                              </span>
+
+                              <span className="text-[#64748b]">
+                                →
+                              </span>
+
+                              <span className="text-[#06b6d4]">
+                                {edge.relationship}
+                              </span>
+
+                              <span className="text-[#64748b]">
+                                →
+                              </span>
+
+                              <span className="text-[#6366f1] truncate max-w-[35%]">
+                                {edge.target}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="py-8 text-center text-xs text-[#64748b]">
+                      No entity evidence available.
+                    </div>
+                  )}
                 </div>
               )}
             </div>
           </div>
         </div>
 
-        {/* =======================================================
-            RIGHT COLUMN
-        ======================================================= */}
+        {/* RIGHT COLUMN */}
         <div className="space-y-4">
-          {/* =====================================================
-              Entity Graph
-          ===================================================== */}
+          {/* Entity Graph */}
           <div className="glass-card rounded-xl p-4">
             <div className="flex items-center justify-between mb-3">
               <div>
@@ -777,16 +888,13 @@ useEffect(() => {
               <div className="h-130 rounded-lg bg-[#060a18] flex items-center justify-center">
                 <div className="flex items-center gap-2 text-xs text-[#64748b]">
                   <div className="w-4 h-4 rounded-full border-2 border-[#6366f1] border-t-transparent animate-spin" />
-
                   Loading graph evidence…
                 </div>
               </div>
             ) : graphError ? (
               <div className="h-130 rounded-lg bg-[#060a18] flex items-center justify-center">
                 <div className="text-center max-w-sm px-5">
-                  <div className="text-2xl mb-2">
-                    ⚠️
-                  </div>
+                  <div className="text-2xl mb-2">⚠️</div>
 
                   <div className="text-xs text-[#e2e8f0] font-semibold">
                     Graph unavailable
@@ -808,9 +916,7 @@ useEffect(() => {
             )}
           </div>
 
-          {/* =====================================================
-              Analyst Actions
-          ===================================================== */}
+          {/* Analyst Actions */}
           <div className="glass-card rounded-xl p-4">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-xs font-semibold text-[#e2e8f0]">
@@ -833,8 +939,7 @@ useEffect(() => {
                 </div>
 
                 <div className="text-[10px] text-[#64748b] mt-1">
-                  Alert status updated to{" "}
-                  {alert.status}
+                  Alert status updated to {alert.status}
                 </div>
               </div>
             ) : (
@@ -844,15 +949,12 @@ useEffect(() => {
                     <button
                       key={action.label}
                       onClick={() => {
-                        setSelectedAction(
-                          action.label
-                        );
+                        setSelectedAction(action.label);
                         setActionError(null);
                       }}
                       disabled={actionLoading}
                       className={`px-2 py-2 rounded-lg text-[11px] font-semibold text-left transition-all border ${
-                        selectedAction ===
-                        action.label
+                        selectedAction === action.label
                           ? "border-[rgba(99,102,241,0.5)] bg-[rgba(99,102,241,0.15)]"
                           : "border-[rgba(99,102,241,0.1)] bg-[rgba(13,18,40,0.5)] hover:border-[rgba(99,102,241,0.25)]"
                       } ${
@@ -862,8 +964,7 @@ useEffect(() => {
                       }`}
                       style={{
                         color:
-                          selectedAction ===
-                          action.label
+                          selectedAction === action.label
                             ? "#e2e8f0"
                             : "#94a3b8",
                       }}
