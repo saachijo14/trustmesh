@@ -17,9 +17,9 @@ type Alert = {
 };
 
 const tierBadge = (tier: string) => {
-  if (tier === "CRITICAL") return "badge-critical";
-  if (tier === "HIGH") return "badge-high";
-  if (tier === "MEDIUM") return "badge-medium";
+  if (tier.toUpperCase() === "CRITICAL") return "badge-critical";
+  if (tier.toUpperCase() === "HIGH") return "badge-high";
+  if (tier.toUpperCase() === "MEDIUM") return "badge-medium";
   return "badge-low";
 };
 
@@ -108,42 +108,34 @@ export default function Alerts() {
     searchParams.get("status")?.toUpperCase() || "ALL"
   );
 
-  const [agentLed, setAgentLed] =
-    useState(searchParams.get("agent_led") === "true");
-
   const [search, setSearch] = useState(
     searchParams.get("search") || ""
   );
 
-const updateFilters = (
-  nextTier: string,
-  nextStatus: string,
-  nextAgentLed: boolean,
-  nextSearch: string
-) => {
-  const params = new URLSearchParams();
-
-  if (nextTier !== "ALL") {
-    params.set("risk_tier", nextTier);
-  }
-
-  if (nextStatus !== "ALL") {
-    params.set("status", nextStatus);
-  }
-
-  if (nextAgentLed) {
-    params.set("agent_led", "true");
-  }
-
-  if (nextSearch.trim()) {
-    params.set("search", nextSearch.trim());
-  }
-
-  setSearchParams(params, { replace: true });
-};
-
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const updateFilters = (
+    nextTier: string,
+    nextStatus: string,
+    nextSearch: string
+  ) => {
+    const params = new URLSearchParams();
+
+    if (nextTier !== "ALL") {
+      params.set("risk_tier", nextTier);
+    }
+
+    if (nextStatus !== "ALL") {
+      params.set("status", nextStatus);
+    }
+
+    if (nextSearch.trim()) {
+      params.set("search", nextSearch.trim());
+    }
+
+    setSearchParams(params, { replace: true });
+  };
 
   useEffect(() => {
     const loadAlerts = async () => {
@@ -176,24 +168,15 @@ const updateFilters = (
     return alerts.filter((a) => {
       if (
         tier !== "ALL" &&
-        a.risk_tier.toUpperCase() !== tier.toUpperCase()
+        a.risk_tier.toUpperCase() !== tier
       ) {
         return false;
       }
 
       if (
         status !== "ALL" &&
-        a.status.toUpperCase() !== status.toUpperCase()
+        a.status.toUpperCase() !== status
       ) {
-        return false;
-      }
-
-      /*
-       * The current backend does not expose an agent_led field.
-       * Therefore this filter is intentionally disabled until the
-       * backend provides that signal.
-       */
-      if (agentLed) {
         return false;
       }
 
@@ -201,14 +184,79 @@ const updateFilters = (
         searchValue &&
         !a.alert_id.toUpperCase().includes(searchValue) &&
         !a.order_id.toUpperCase().includes(searchValue) &&
-        !(a.customer_id || "").toUpperCase().includes(searchValue)
+        !(a.customer_id || "")
+          .toUpperCase()
+          .includes(searchValue)
       ) {
         return false;
       }
 
       return true;
     });
-  }, [alerts, tier, status, agentLed, search]);
+  }, [alerts, tier, status, search]);
+
+  /*
+   * Export the currently filtered alerts as CSV.
+   */
+  const exportCSV = () => {
+    if (!filtered.length) {
+      return;
+    }
+
+    const headers = [
+      "Alert ID",
+      "Order ID",
+      "Customer ID",
+      "Risk Score",
+      "Risk Tier",
+      "Exposure INR",
+      "Recommended Action",
+      "Status",
+      "Assignee",
+      "Created At",
+    ];
+
+    const rows = filtered.map((a) => [
+      a.alert_id,
+      a.order_id,
+      a.customer_id || "",
+      a.risk_score,
+      a.risk_tier,
+      a.exposure_inr,
+      a.rec_action,
+      a.status,
+      a.assignee || "",
+      a.created_at,
+    ]);
+
+    const csv = [headers, ...rows]
+      .map((row) =>
+        row
+          .map((value) =>
+            `"${String(value).replace(/"/g, '""')}"`
+          )
+          .join(",")
+      )
+      .join("\n");
+
+    const blob = new Blob([csv], {
+      type: "text/csv;charset=utf-8;",
+    });
+
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = `trustmesh-alerts-${new Date()
+      .toISOString()
+      .slice(0, 10)}.csv`;
+
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <div className="h-full flex flex-col p-6 gap-4">
@@ -220,19 +268,19 @@ const updateFilters = (
           </h1>
 
           <p className="text-sm text-[#64748b]">
-            {loading ? "Loading alerts…" : `${filtered.length} alerts · Analyst view`}
+            {loading
+              ? "Loading alerts…"
+              : `${filtered.length} alerts · Analyst view`}
           </p>
         </div>
 
-        <div className="flex gap-2">
-          <button className="btn-ghost rounded-lg px-3 py-2 text-xs">
-            Assign Batch
-          </button>
-
-          <button className="btn-primary rounded-lg px-4 py-2 text-sm font-medium">
-            Export CSV
-          </button>
-        </div>
+        <button
+          onClick={exportCSV}
+          disabled={!filtered.length}
+          className="btn-primary rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-40"
+        >
+          Export CSV
+        </button>
       </div>
 
       {/* Filters */}
@@ -255,17 +303,16 @@ const updateFilters = (
           <input
             value={search}
             onChange={(e) => {
-            const value = e.target.value;
+              const value = e.target.value;
 
-            setSearch(value);
+              setSearch(value);
 
-            updateFilters(
-            tier,
-            status,
-            agentLed,
-            value
-            );
-          }}
+              updateFilters(
+                tier,
+                status,
+                value
+              );
+            }}
             placeholder="ALT-, ORD- or customer"
             className="bg-[rgba(13,18,40,0.8)] border border-[rgba(99,102,241,0.2)] rounded-lg pl-8 pr-3 py-1.5 text-xs text-[#e2e8f0] placeholder:text-[#64748b] focus:outline-none focus:border-[rgba(99,102,241,0.4)] w-44"
           />
@@ -275,91 +322,44 @@ const updateFilters = (
           label="Risk Tier"
           value={tier}
           onChange={(value) => {
-          setTier(value);
+            setTier(value);
 
-          updateFilters(
-          value,
-          status,
-          agentLed,
-          search
-          );
+            updateFilters(
+              value,
+              status,
+              search
+            );
           }}
-          options={["ALL", "CRITICAL", "HIGH", "MEDIUM", "LOW"]}
+          options={[
+            "ALL",
+            "CRITICAL",
+            "HIGH",
+            "MEDIUM",
+            "LOW",
+          ]}
         />
 
         <FilterSelect
           label="Status"
           value={status}
           onChange={(value) => {
-          setStatus(value);
-
-          updateFilters(
-          tier,
-          value,
-          agentLed,
-          search
-          );
-          }}
-          options={[
-          "ALL",
-          "OPEN",
-          "REVIEWING",
-          "ESCALATED",
-          "RESOLVED",
-          "CLOSED",
-        ]}
-        />
-
-        <label className="flex items-center gap-2 cursor-pointer text-xs text-[#94a3b8]">
-          <div
-            onClick={() => {
-            const value = !agentLed;
-
-            setAgentLed(value);
+            setStatus(value);
 
             updateFilters(
               tier,
-              status,
               value,
               search
             );
-            }}
-
-            className={`w-8 h-4 rounded-full relative transition-colors cursor-pointer ${
-              agentLed
-                ? "bg-[#6366f1]"
-                : "bg-[rgba(99,102,241,0.15)]"
-            }`}
-          >
-            <div
-              className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${
-                agentLed ? "left-4" : "left-0.5"
-              }`}
-            />
-          </div>
-
-          Agent-led Only
-        </label>
-
-        <div className="ml-auto flex gap-2">
-          <button className="btn-ghost rounded-lg px-3 py-1.5 text-xs flex items-center gap-1.5">
-            <svg
-              className="w-3.5 h-3.5"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z"
-              />
-            </svg>
-
-            More Filters
-          </button>
-        </div>
+          }}
+          options={[
+            "ALL",
+            "OPEN",
+            "REVIEWING",
+            "ESCALATED",
+            "RESOLVED",
+            "CLOSED",
+          ]}
+        />
       </div>
 
       {/* Error */}
@@ -416,7 +416,10 @@ const updateFilters = (
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={9} className="px-4 py-12 text-center">
+                  <td
+                    colSpan={9}
+                    className="px-4 py-12 text-center"
+                  >
                     <div className="flex items-center justify-center gap-3 text-[#64748b]">
                       <div className="w-4 h-4 rounded-full border-2 border-[#6366f1] border-t-transparent animate-spin" />
                       Loading alert queue…
@@ -425,15 +428,21 @@ const updateFilters = (
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-4 py-12 text-center">
-                    <div className="text-2xl mb-2">🔎</div>
+                  <td
+                    colSpan={9}
+                    className="px-4 py-12 text-center"
+                  >
+                    <div className="text-2xl mb-2">
+                      🔎
+                    </div>
 
                     <div className="text-sm text-[#94a3b8]">
                       No alerts match the current filters.
                     </div>
 
                     <div className="text-xs text-[#64748b] mt-1">
-                      Try changing the risk tier, status, or search term.
+                      Try changing the risk tier, status,
+                      or search term.
                     </div>
                   </td>
                 </tr>
@@ -441,24 +450,23 @@ const updateFilters = (
                 filtered.map((a, i) => (
                   <tr
                     key={a.alert_id}
-                    onClick={() => navigate(`/alerts/${a.alert_id}`)}
+                    onClick={() =>
+                      navigate(`/alerts/${a.alert_id}`)
+                    }
                     className={`border-b border-[rgba(99,102,241,0.07)] hover:bg-[rgba(99,102,241,0.06)] cursor-pointer transition-colors ${
                       i % 2 === 0
                         ? ""
                         : "bg-[rgba(13,18,40,0.3)]"
                     }`}
                   >
-                    {/* Alert ID */}
                     <td className="px-4 py-3 font-mono text-[#6366f1] font-semibold">
                       {a.alert_id}
                     </td>
 
-                    {/* Order */}
                     <td className="px-4 py-3 font-mono text-[#94a3b8]">
                       {a.order_id}
                     </td>
 
-                    {/* Risk */}
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
                         <div
@@ -485,12 +493,10 @@ const updateFilters = (
                       </div>
                     </td>
 
-                    {/* Exposure */}
                     <td className="px-4 py-3 font-mono text-[#e2e8f0]">
                       {formatINR(a.exposure_inr)}
                     </td>
 
-                    {/* Reasons */}
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-1">
                         {a.top_reasons.map((reason) => (
@@ -504,7 +510,6 @@ const updateFilters = (
                       </div>
                     </td>
 
-                    {/* Recommended action */}
                     <td className="px-4 py-3">
                       <span
                         className={`font-mono text-[9px] font-bold px-2 py-1 rounded ${actionStyle(
@@ -515,7 +520,6 @@ const updateFilters = (
                       </span>
                     </td>
 
-                    {/* Status */}
                     <td className="px-4 py-3">
                       <span
                         className={`text-[9px] font-bold px-1.5 py-0.5 rounded border font-mono ${statusColor(
@@ -526,12 +530,10 @@ const updateFilters = (
                       </span>
                     </td>
 
-                    {/* Assignee */}
                     <td className="px-4 py-3 text-[#94a3b8]">
                       {a.assignee || "Unassigned"}
                     </td>
 
-                    {/* Time */}
                     <td className="px-4 py-3 text-[#64748b]">
                       {formatTimeAgo(a.created_at)}
                     </td>
