@@ -952,13 +952,21 @@ export default function CaseDetail() {
                         setSelectedAction(action.label);
                         setActionError(null);
                       }}
-                      disabled={actionLoading}
+                      disabled={
+                        actionLoading ||
+                        ["RESOLVED", "CLOSED"].includes(
+                          alert.status.toUpperCase()
+                        )
+                      }
                       className={`px-2 py-2 rounded-lg text-[11px] font-semibold text-left transition-all border ${
                         selectedAction === action.label
                           ? "border-[rgba(99,102,241,0.5)] bg-[rgba(99,102,241,0.15)]"
                           : "border-[rgba(99,102,241,0.1)] bg-[rgba(13,18,40,0.5)] hover:border-[rgba(99,102,241,0.25)]"
                       } ${
-                        actionLoading
+                        actionLoading ||
+                        ["RESOLVED", "CLOSED"].includes(
+                          alert.status.toUpperCase()
+                        )
                           ? "opacity-50 cursor-not-allowed"
                           : ""
                       }`}
@@ -995,6 +1003,9 @@ export default function CaseDetail() {
                     onClick={handleSubmit}
                     disabled={
                       actionLoading ||
+                      ["RESOLVED", "CLOSED"].includes(
+                        alert.status.toUpperCase()
+                      ) ||
                       Boolean(
                         chosen?.needsReason &&
                           !reason.trim()
