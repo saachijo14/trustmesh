@@ -1,1 +1,6 @@
+fastapi
+uvicorn[standard]
+neo4j
+faker
+python-dotenv
 razorpay
