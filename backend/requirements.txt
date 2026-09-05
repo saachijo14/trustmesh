@@ -4,3 +4,4 @@ neo4j
 faker
 python-dotenv
 razorpay
+networkx
