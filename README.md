@@ -180,17 +180,6 @@ trustmesh/
 
 ---
 
-## Roadmap
-
-- [x] Core risk engine, policy engine, TrustPass issuance
-- [x] Fraud ring detection + live Ring Explorer
-- [x] Analyst alert queue + audit trail
-- [x] Full frontend ↔ backend integration
-- [x] Razorpay test-mode payment gating with tamper detection
-- [ ] Held-out evaluation on unseen cases
-- [ ] Production deployment (Vercel + Render/Railway/Fly.io)
-
----
 
 ## License
 
