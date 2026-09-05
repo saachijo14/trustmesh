@@ -74,26 +74,7 @@ type CheckoutResult = {
   };
 };
 
-const messages = [
-  {
-    role: "agent",
-    content:
-      "Hi! I'd like to purchase the Wireless Earbuds Pro (₹8,400) + Smart Watch Series 5 (₹24,200). I have coupon SAVE40. My budget is ₹25,000.",
-  },
-  {
-    role: "system",
-    content:
-      "Processing request… Applying coupon SAVE40. Cart total: ₹19,560 after discount.",
-  },
-  {
-    role: "agent",
-    content: "Great! Please proceed with payment via UPI.",
-  },
-  {
-    role: "system",
-    content: "🔍 Risk check in progress…",
-  },
-];
+
 
 const cartItems = [
   {
@@ -111,7 +92,7 @@ const cartItems = [
 ];
 
 export default function AgentCheckout() {
-  const [step, setStep] = useState(0);
+  
   const [otpOpen, setOtpOpen] = useState(false);
   const [otp, setOtp] = useState(["", "", "", "", "", ""]);
   const [gateDenied, setGateDenied] = useState(false);
@@ -127,7 +108,9 @@ export default function AgentCheckout() {
   >("idle");
   const [paymentMessage, setPaymentMessage] = useState("");
 
-  const [chatMessages, setChatMessages] = useState(messages.slice(0, 1));
+  const [chatMessages, setChatMessages] = useState<
+  { role: "agent" | "system"; content: string }[]
+>([]);
 
   const chatRef = useRef<HTMLDivElement>(null);
 
@@ -142,16 +125,25 @@ export default function AgentCheckout() {
   const discount = subtotal * 0.4;
   const total = subtotal - discount;
 
-  useEffect(() => {
-    if (step < messages.length - 1) {
-      const t = setTimeout(() => {
-        setChatMessages((prev) => [...prev, messages[step + 1]]);
-        setStep((s) => s + 1);
-      }, 1800);
-
-      return () => clearTimeout(t);
-    }
-  }, [step]);
+useEffect(() => {
+  const itemSummary = cartItems
+    .map(
+      (item) =>
+        `${item.name} (₹${item.price.toLocaleString("en-IN")})`
+    )
+    .join(" + ");
+// The async loader updates state after the API response arrives.
+  // This is intentional because the effect synchronizes the page with backend policy state.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  setChatMessages([
+    {
+      role: "agent",
+      content:
+        `I'd like to purchase ${itemSummary}. ` +
+        `I have coupon SAVE40. My budget is ₹25,000.`,
+    },
+  ]);
+}, []);
 
   useEffect(() => {
     chatRef.current?.scrollTo({
@@ -264,14 +256,30 @@ export default function AgentCheckout() {
             );
 
           if (
-            verification.verified &&
-            verification.paid
-          ) {
-            setPaymentStatus("success");
-            setPaymentMessage(
-              "Payment verified successfully."
-            );
-          } else {
+              verification.verified &&
+              verification.paid
+            ) {
+              setPaymentStatus("success");
+              setPaymentMessage(
+                "Payment verified successfully."
+              );
+
+              setChatMessages((prev) => [
+                ...prev,
+                {
+                  role: "system",
+                  content:
+                    `Payment verified successfully · ₹${total.toLocaleString(
+                      "en-IN"
+                    )} captured by Razorpay.`,
+                },
+                {
+                  role: "agent",
+                  content:
+                    "Payment confirmed. The checkout is complete.",
+                },
+              ]);
+            } else {
             setPaymentStatus("failed");
             setPaymentMessage(
               verification.message ||
@@ -328,6 +336,27 @@ export default function AgentCheckout() {
     setCheckoutError("");
     setGateDenied(false);
     setRazorpayOpen(false);
+    setPaymentStatus("idle");
+    setPaymentMessage("");
+
+    setChatMessages((prev) => [
+    ...prev,
+    {
+      role: "system",
+      content:
+        `Processing checkout request… Applying SAVE40. ` +
+        `Cart total: ₹${total.toLocaleString("en-IN")} after discount.`,
+    },
+    {
+      role: "agent",
+      content:
+        "The cart is ready. Please evaluate the checkout risk before payment.",
+    },
+    {
+      role: "system",
+      content: "🔍 Risk evaluation in progress…",
+    },
+  ]);
 
     try {
       const result = await evaluateCheckout(
@@ -339,24 +368,91 @@ export default function AgentCheckout() {
 
       setCheckoutResult(result);
 
-      const decision = result.policy.decision;
+const decision = result.policy.decision;
+const score = Math.round(result.risk.risk_score);
+const tier = result.risk.risk_tier.toUpperCase();
+
+setChatMessages((prev) => [
+  ...prev,
+  {
+    role: "system",
+    content:
+      `Risk evaluation completed · Score: ${score} · Tier: ${tier}.`,
+  },
+]);
+
+if (result.policy.reason_codes.length > 0) {
+  setChatMessages((prev) => [
+    ...prev,
+    {
+      role: "system",
+      content:
+        `Risk signals: ${result.policy.reason_codes
+          .slice(0, 3)
+          .join(" · ")}`,
+    },
+  ]);
+}
+
+setChatMessages((prev) => [
+  ...prev,
+  {
+    role: "system",
+    content:
+      `Policy decision: ${decision.replaceAll("_", " ")}.`,
+  },
+]);
 
       if (
-        decision === "DENY_AUTONOMOUS_ACTION" ||
+  decision === "DENY_AUTONOMOUS_ACTION" ||
+  decision === "HOLD_FOR_REVIEW"
+) {
+  setChatMessages((prev) => [
+    ...prev,
+    {
+      role: "system",
+      content:
         decision === "HOLD_FOR_REVIEW"
-      ) {
-        setGateDenied(true);
-        return;
-      }
+          ? "Checkout is held for analyst review."
+          : "Autonomous checkout is blocked by policy.",
+    },
+  ]);
 
-      if (decision === "STEP_UP_REQUIRED") {
-        setOtpOpen(true);
-        return;
-      }
+  setGateDenied(true);
+  return;
+}
 
-      if (decision === "ALLOW") {
-        setRazorpayOpen(true);
-      }
+if (decision === "STEP_UP_REQUIRED") {
+  setChatMessages((prev) => [
+    ...prev,
+    {
+      role: "system",
+      content:
+        "Additional verification is required before payment.",
+    },
+    {
+      role: "system",
+      content:
+        `TrustPass issued: ${result.trustpass.trustpass_id}`,
+    },
+  ]);
+
+  setOtpOpen(true);
+  return;
+}
+
+if (decision === "ALLOW") {
+  setChatMessages((prev) => [
+    ...prev,
+    {
+      role: "system",
+      content:
+        `Checkout approved. TrustPass issued: ${result.trustpass.trustpass_id}`,
+    },
+  ]);
+
+  setRazorpayOpen(true);
+}
     } catch (error) {
       setCheckoutError(
         error instanceof Error
@@ -518,23 +614,7 @@ export default function AgentCheckout() {
                 </div>
               ))}
 
-              {step < messages.length - 1 && (
-                <div className="flex justify-end">
-                  <div className="bg-[rgba(99,102,241,0.08)] border border-[rgba(99,102,241,0.2)] rounded-xl px-3 py-2">
-                    <div className="flex gap-1">
-                      {[0, 1, 2].map((i) => (
-                        <div
-                          key={i}
-                          className="w-1.5 h-1.5 rounded-full bg-[#6366f1] animate-bounce"
-                          style={{
-                            animationDelay: `${i * 0.15}s`,
-                          }}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
+              
             </div>
           </div>
 
@@ -546,17 +626,17 @@ export default function AgentCheckout() {
 
             {[
               {
-                rule: "Max coupon per day",
-                limit: "3",
-                current: checkoutResult
-                  ? checkoutResult.trustpass.coupon_cap_inr
-                  : "100",
-                fail: Boolean(
-                  checkoutResult?.policy.reason_codes.some((r) =>
-                    r.toLowerCase().includes("coupon")
-                  )
-                ),
-              },
+                  rule: "Coupon cap",
+                  limit: "₹100",
+                  current: checkoutResult
+                    ? `₹${checkoutResult.trustpass.coupon_cap_inr}`
+                    : "₹100",
+                  fail: Boolean(
+                    checkoutResult?.policy.reason_codes.some((r) =>
+                      r.toLowerCase().includes("coupon")
+                    )
+                  ),
+                },
               {
                 rule: "Max order value",
                 limit: "₹50,000",
@@ -823,25 +903,54 @@ export default function AgentCheckout() {
               <>
                 <div className="space-y-2 mb-4 text-xs text-[#94a3b8]">
                   {checkoutResult ? (
-                    checkoutResult.policy.reason_codes.length >
-                    0 ? (
-                      checkoutResult.policy.reason_codes
-                        .slice(0, 4)
-                        .map((reason, i) => (
-                          <div
-                            key={i}
-                            className="flex items-start gap-2 p-2 rounded bg-[rgba(245,158,11,0.05)]"
-                          >
-                            <span>⚠️</span>
-                            <span>{reason}</span>
+                      checkoutResult.policy.decision === "ALLOW" ? (
+                        checkoutResult.policy.reason_codes.length > 0 ? (
+                          checkoutResult.policy.reason_codes
+                            .slice(0, 4)
+                            .map((reason, i) => (
+                              <div
+                                key={i}
+                                className="flex items-start gap-2 p-2 rounded bg-[rgba(16,185,129,0.05)]"
+                              >
+                                <span>✓</span>
+                                <span>{reason}</span>
+                              </div>
+                            ))
+                        ) : (
+                          <div className="p-2 rounded bg-[rgba(16,185,129,0.05)]">
+                            ✓ Checkout approved by policy
                           </div>
-                        ))
+                        )
+                      ) : (
+                        <>
+                          <div className="flex items-start gap-2 p-2 rounded bg-[rgba(245,158,11,0.08)]">
+                            <span>⚠️</span>
+
+                            <span>
+                              {checkoutResult.policy.decision ===
+                              "STEP_UP_REQUIRED"
+                                ? "Additional verification is required before payment."
+                                : checkoutResult.policy.decision ===
+                                  "HOLD_FOR_REVIEW"
+                                ? "This order is held for analyst review."
+                                : "Autonomous checkout is blocked by policy."}
+                            </span>
+                          </div>
+
+                          {checkoutResult.policy.reason_codes
+                            .slice(0, 4)
+                            .map((reason, i) => (
+                              <div
+                                key={i}
+                                className="flex items-start gap-2 p-2 rounded bg-[rgba(245,158,11,0.05)]"
+                              >
+                                <span>⚠️</span>
+                                <span>{reason}</span>
+                              </div>
+                            ))}
+                        </>
+                      )
                     ) : (
-                      <div className="p-2 rounded bg-[rgba(16,185,129,0.05)]">
-                        ✓ No blocking policy violations
-                      </div>
-                    )
-                  ) : (
                     <>
                       <div className="flex items-start gap-2 p-2 rounded bg-[rgba(245,158,11,0.05)]">
                         <span>ℹ️</span>
