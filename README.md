@@ -119,7 +119,7 @@ pip install pip-system-certs # Windows only — fixes SSL cert interception issu
 uvicorn app.main:app --reload
 ```
 
-Backend runs at `http://127.0.0.1:8000`, interactive docs at `/docs`.
+Backend runs at `https://trustmesh-api.onrender.com`, interactive docs at `/docs`.
 
 ### Frontend
 
@@ -129,7 +129,7 @@ npm install
 npm run dev
 ```
 
-Frontend runs at `http://localhost:5173`.
+Frontend runs at `https://trustmesh-ten.vercel.app/`.
 
 ### Generate Synthetic Data
 
