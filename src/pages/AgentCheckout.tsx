@@ -207,10 +207,14 @@ useEffect(() => {
       );
     }
 
+    const trustpassId =
+      checkoutResult.trustpass.trustpass_id;
+
     const order = await createPaymentOrder(
       customerId,
       cartId,
-      total
+      total,
+      trustpassId
     );
 
     const options: RazorpayOptions = {

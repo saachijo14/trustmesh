@@ -175,6 +175,17 @@ export const evaluateCheckout = (
     }),
   });
 
+  export type PaymentOrderResult = {
+  key_id: string;
+  order_id: string;
+  amount: number;
+  currency: string;
+  receipt?: string;
+  status?: string;
+  trustpass_id: string;
+};
+
+
   /* ---------------- Policy Versions ---------------- */
 
 export const getPolicyVersions = () =>
@@ -208,14 +219,16 @@ export type PaymentVerificationResult = {
 export const createPaymentOrder = (
   customerId: string,
   cartId: string,
-  amountInr: number
+  amountInr: number,
+  trustpassId: string
 ) =>
-  request<RazorpayOrder>("/checkout/payment/order", {
+  request<PaymentOrderResult>("/checkout/payment/order", {
     method: "POST",
     body: JSON.stringify({
       customer_id: customerId,
       cart_id: cartId,
       amount_inr: amountInr,
+      trustpass_id: trustpassId,
     }),
   });
 

@@ -3,7 +3,7 @@ from pydantic import BaseModel
 
 from app.services.risk_scoring import compute_risk_score
 from app.services.policy_engine import apply_policy
-from app.services.trustpass import issue_trustpass
+from app.services.trustpass import (issue_trustpass,get_trustpass)
 from app.services.analyst_actions import create_alert
 from app.services.neo4j_client import get_driver
 from app.services.razorpay_client import (
@@ -30,7 +30,7 @@ class CreatePaymentOrderRequest(BaseModel):
     customer_id: str
     cart_id: str
     amount_inr: float
-
+    trustpass_id: str
 
 class VerifyPaymentRequest(BaseModel):
     razorpay_payment_id: str
@@ -89,8 +89,8 @@ def evaluate_checkout(req: EvaluateCheckoutRequest):
 @router.post("/payment/order")
 def create_payment_order(req: CreatePaymentOrderRequest):
     """
-    Create a Razorpay order after TrustMesh has allowed
-    the checkout to proceed.
+    Create a Razorpay order only when the TrustMesh TrustPass
+    authorizes the requested checkout amount.
     """
 
     if not is_configured():
@@ -109,9 +109,82 @@ def create_payment_order(req: CreatePaymentOrderRequest):
             detail="Payment amount must be greater than zero",
         )
 
+    # ---------------------------------------------------------
+    # 1. Load and validate TrustPass
+    # ---------------------------------------------------------
+    trustpass = get_trustpass(req.trustpass_id)
+
+    if trustpass is None:
+        raise HTTPException(
+            status_code=400,
+            detail="TrustPass not found",
+        )
+
+    if trustpass.get("status") != "active":
+        raise HTTPException(
+            status_code=403,
+            detail="TrustPass is not active",
+        )
+
+    if trustpass.get("customer_id") != req.customer_id:
+        raise HTTPException(
+            status_code=403,
+            detail="TrustPass does not belong to this customer",
+        )
+
+    if trustpass.get("subject_id") != req.cart_id:
+        raise HTTPException(
+            status_code=403,
+            detail="TrustPass is not valid for this cart",
+        )
+
+    # ---------------------------------------------------------
+    # 2. Verify checkout permission
+    # ---------------------------------------------------------
+    allowed_actions = trustpass.get("allowed_actions", [])
+
+    checkout_authorized = any(
+        action in allowed_actions
+        for action in (
+            "CREATE_ORDER",
+            "CREATE_ORDER_AFTER_OTP",
+        )
+    )
+
+    if not checkout_authorized:
+        raise HTTPException(
+            status_code=403,
+            detail="TrustPass does not authorize checkout",
+        )
+
+    # ---------------------------------------------------------
+    # 3. Verify amount against TrustPass
+    # ---------------------------------------------------------
+    max_permitted = trustpass.get(
+        "max_permitted_amount_inr"
+    )
+
+    if max_permitted is None:
+        raise HTTPException(
+            status_code=403,
+            detail="TrustPass has no permitted checkout amount",
+        )
+
+    if req.amount_inr > float(max_permitted):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Payment amount exceeds the maximum amount "
+                "authorized by TrustMesh"
+            ),
+        )
+
     receipt = f"tm_{req.cart_id}"
 
     try:
+        # -----------------------------------------------------
+        # 4. Create Razorpay order
+        # -----------------------------------------------------
         razorpay_order = create_order(
             amount_inr=req.amount_inr,
             receipt=receipt,
@@ -119,6 +192,9 @@ def create_payment_order(req: CreatePaymentOrderRequest):
             cart_id=req.cart_id,
         )
 
+        # -----------------------------------------------------
+        # 5. Persist payment authorization
+        # -----------------------------------------------------
         driver = get_driver()
 
         with driver.session() as session:
@@ -128,6 +204,7 @@ def create_payment_order(req: CreatePaymentOrderRequest):
                     razorpay_order_id: $razorpay_order_id,
                     customer_id: $customer_id,
                     cart_id: $cart_id,
+                    trustpass_id: $trustpass_id,
                     amount_inr: $amount_inr,
                     amount_paise: $amount_paise,
                     currency: $currency,
@@ -138,6 +215,7 @@ def create_payment_order(req: CreatePaymentOrderRequest):
                 razorpay_order_id=razorpay_order["id"],
                 customer_id=req.customer_id,
                 cart_id=req.cart_id,
+                trustpass_id=req.trustpass_id,
                 amount_inr=req.amount_inr,
                 amount_paise=razorpay_order["amount"],
                 currency=razorpay_order["currency"],
@@ -151,14 +229,20 @@ def create_payment_order(req: CreatePaymentOrderRequest):
             "currency": razorpay_order["currency"],
             "receipt": razorpay_order.get("receipt"),
             "status": razorpay_order.get("status"),
+            "trustpass_id": req.trustpass_id,
         }
 
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Unable to create Razorpay order: {str(e)}",
-        )
+    except HTTPException:
+        raise
 
+    except HTTPException:
+        raise
+
+    except Exception:
+        raise HTTPException(
+        status_code=500,
+        detail="Unable to create Razorpay order.",
+    )
 
 @router.post("/payment/verify")
 def verify_payment(req: VerifyPaymentRequest):
@@ -308,3 +392,4 @@ def verify_payment(req: VerifyPaymentRequest):
             status_code=500,
             detail=f"Payment verification failed: {str(e)}",
         )
+
