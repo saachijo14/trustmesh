@@ -1,5 +1,46 @@
 import { useState, useEffect, useRef } from "react";
-import { evaluateCheckout } from "../api/client";
+import {evaluateCheckout,createPaymentOrder,verifyPayment} from "../api/client";
+
+declare global {
+  interface Window {
+    Razorpay: new (options: RazorpayOptions) => RazorpayInstance;
+  }
+}
+
+type RazorpayOptions = {
+  key: string;
+  amount: number;
+  currency: string;
+  name: string;
+  description: string;
+  order_id: string;
+  prefill?: {
+    name?: string;
+    email?: string;
+    contact?: string;
+  };
+  theme?: {
+    color?: string;
+  };
+  modal?: {
+    ondismiss?: () => void;
+  };
+  handler: (response: RazorpayPaymentResponse) => void;
+};
+
+type RazorpayPaymentResponse = {
+  razorpay_payment_id: string;
+  razorpay_order_id: string;
+  razorpay_signature: string;
+};
+
+type RazorpayInstance = {
+  open: () => void;
+  on: (
+    event: string,
+    handler: (response: unknown) => void
+  ) => void;
+};
 
 type CheckoutResult = {
   risk: {
@@ -80,6 +121,12 @@ export default function AgentCheckout() {
     useState<CheckoutResult | null>(null);
   const [checkoutError, setCheckoutError] = useState("");
 
+  const [paymentLoading, setPaymentLoading] = useState(false);
+  const [paymentStatus, setPaymentStatus] = useState<
+  "idle" | "processing" | "success" | "failed"
+  >("idle");
+  const [paymentMessage, setPaymentMessage] = useState("");
+
   const [chatMessages, setChatMessages] = useState(messages.slice(0, 1));
 
   const chatRef = useRef<HTMLDivElement>(null);
@@ -124,6 +171,157 @@ export default function AgentCheckout() {
       document.getElementById(`otp-${i + 1}`)?.focus();
     }
   };
+
+  const openRazorpayCheckout = async () => {
+  if (!checkoutResult) {
+    setCheckoutError("Checkout evaluation is required first.");
+    return;
+  }
+
+  setPaymentLoading(true);
+  setPaymentStatus("processing");
+  setPaymentMessage("");
+  setCheckoutError("");
+
+  try {
+    if (!window.Razorpay) {
+      const existingScript = document.querySelector(
+        'script[src="https://checkout.razorpay.com/v1/checkout.js"]'
+      );
+
+      if (!existingScript) {
+        await new Promise<void>((resolve, reject) => {
+          const script = document.createElement("script");
+
+          script.src =
+            "https://checkout.razorpay.com/v1/checkout.js";
+
+          script.onload = () => resolve();
+          script.onerror = () =>
+            reject(
+              new Error(
+                "Unable to load Razorpay Checkout."
+              )
+            );
+
+          document.body.appendChild(script);
+        });
+      }
+    }
+
+    if (!window.Razorpay) {
+      throw new Error(
+        "Razorpay Checkout could not be loaded."
+      );
+    }
+
+    const order = await createPaymentOrder(
+      customerId,
+      cartId,
+      total
+    );
+
+    const options: RazorpayOptions = {
+      key: order.key_id,
+      amount: order.amount,
+      currency: order.currency,
+      name: "TrustMesh",
+      description: "TrustMesh Agent Checkout",
+      order_id: order.order_id,
+
+      prefill: {
+        name: "TrustMesh Test Customer",
+        contact: "9999999999",
+      },
+
+      theme: {
+        color: "#6366f1",
+      },
+
+      modal: {
+        ondismiss: () => {
+          setPaymentLoading(false);
+          setPaymentStatus("idle");
+          setPaymentMessage(
+            "Payment window was closed."
+          );
+        },
+      },
+
+      handler: async (
+        response: RazorpayPaymentResponse
+      ) => {
+        try {
+          setPaymentMessage(
+            "Verifying payment with TrustMesh…"
+          );
+
+          const verification =
+            await verifyPayment(
+              response.razorpay_payment_id,
+              response.razorpay_order_id,
+              response.razorpay_signature
+            );
+
+          if (
+            verification.verified &&
+            verification.paid
+          ) {
+            setPaymentStatus("success");
+            setPaymentMessage(
+              "Payment verified successfully."
+            );
+          } else {
+            setPaymentStatus("failed");
+            setPaymentMessage(
+              verification.message ||
+                "Payment could not be confirmed."
+            );
+          }
+        } catch (error) {
+          setPaymentStatus("failed");
+          setPaymentMessage(
+            error instanceof Error
+              ? error.message
+              : "Payment verification failed."
+          );
+        } finally {
+          setPaymentLoading(false);
+        }
+      },
+    };
+
+    const razorpay = new window.Razorpay(options);
+
+    razorpay.on(
+      "payment.failed",
+      (response: unknown) => {
+        const failed = response as {
+          error?: {
+            description?: string;
+          };
+        };
+
+        setPaymentStatus("failed");
+        setPaymentMessage(
+          failed.error?.description ||
+            "Payment failed."
+        );
+        setPaymentLoading(false);
+      }
+    );
+
+    razorpay.open();
+  } catch (error) {
+    setPaymentStatus("failed");
+    setPaymentMessage(
+      error instanceof Error
+        ? error.message
+        : "Unable to start payment."
+    );
+    setPaymentLoading(false);
+  }
+};
 
   const runCheckoutEvaluation = async () => {
     setEvaluating(true);
@@ -683,30 +881,71 @@ export default function AgentCheckout() {
             )}
           </div>
 
-          {/* Razorpay mock */}
+          {/* Real Razorpay Checkout */}
           {razorpayOpen && (
             <div className="glass-card rounded-xl p-4">
               <div className="text-xs font-semibold text-[#e2e8f0] mb-3">
                 Razorpay Checkout
               </div>
 
-              <div className="p-3 rounded-lg bg-[rgba(13,18,40,0.6)] text-center mb-3">
-                <div className="text-2xl mb-1">💳</div>
+              {paymentStatus === "success" ? (
+                <div className="p-4 rounded-xl bg-[rgba(16,185,129,0.08)] border border-[rgba(16,185,129,0.25)] text-center">
+                  <div className="text-3xl mb-2">✅</div>
 
-                <div className="text-xs text-[#94a3b8]">
-                  Test Mode · ₹
-                  {total.toLocaleString("en-IN")}
+                  <div className="text-sm font-bold text-[#10b981]">
+                    Payment Successful
+                  </div>
+
+                  <div className="text-xs text-[#94a3b8] mt-1">
+                    Payment verified by TrustMesh
+                  </div>
+
+                  <div className="text-[10px] text-[#64748b] mt-2">
+                    Order: {cartId}
+                  </div>
                 </div>
+              ) : (
+                <>
+                  <div className="p-4 rounded-xl bg-[rgba(13,18,40,0.6)] text-center mb-3">
+                    <div className="text-3xl mb-2">💳</div>
 
-                <input
-                  placeholder="UPI ID or Card"
-                  className="mt-2 w-full bg-[rgba(13,18,40,0.8)] border border-[rgba(99,102,241,0.2)] rounded px-2 py-1.5 text-xs text-[#e2e8f0] placeholder:text-[#64748b] focus:outline-none"
-                />
-              </div>
+                    <div className="text-xs text-[#94a3b8]">
+                      Razorpay Test Mode
+                    </div>
 
-              <button className="w-full btn-primary rounded-lg py-2 text-xs font-semibold">
-                Pay ₹{total.toLocaleString("en-IN")}
-              </button>
+                    <div className="text-lg font-bold text-[#e2e8f0] mt-1">
+                      ₹{total.toLocaleString("en-IN")}
+                    </div>
+
+                    <div className="text-[10px] text-[#64748b] mt-1">
+                      A secure Razorpay Checkout window
+                      will open.
+                    </div>
+                  </div>
+
+                  {paymentMessage && (
+                    <div
+                      className={`mb-3 p-2 rounded-lg text-[10px] ${
+                        paymentStatus === "failed"
+                          ? "bg-[rgba(239,68,68,0.08)] border border-[rgba(239,68,68,0.2)] text-[#ef4444]"
+                          : "bg-[rgba(99,102,241,0.08)] border border-[rgba(99,102,241,0.2)] text-[#94a3b8]"
+                      }`}
+                    >
+                      {paymentMessage}
+                    </div>
+                  )}
+
+                  <button
+                    onClick={openRazorpayCheckout}
+                    disabled={paymentLoading}
+                    className="w-full btn-primary rounded-lg py-2.5 text-xs font-semibold disabled:opacity-50"
+                  >
+                    {paymentLoading
+                      ? "Processing Payment…"
+                      : `Pay ₹${total.toLocaleString("en-IN")}`}
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -726,9 +965,9 @@ export default function AgentCheckout() {
               </h2>
 
               <p className="text-xs text-[#64748b] mt-1">
-                OTP sent to +91 ****1234 · Expires in 5:00
+                Simulated step-up verification · Enter any 6 digits
               </p>
-            </div>
+            </div>  
 
             <div className="flex gap-2 justify-center mb-6">
               {otp.map((v, i) => (
@@ -755,8 +994,16 @@ export default function AgentCheckout() {
 
               <button
                 onClick={() => {
+                  if (otp.some((digit) => !digit)) {
+                    setCheckoutError("Enter all 6 OTP digits.");
+                    return;
+                  }
+
                   setOtpOpen(false);
                   setRazorpayOpen(true);
+                  setPaymentMessage(
+                    "Step-up verification completed in simulator mode."
+                  );
                 }}
                 className="flex-1 btn-primary rounded-xl py-2.5 text-sm font-semibold"
               >

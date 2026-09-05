@@ -184,3 +184,51 @@ export const rollbackPolicyVersion = (versionId: string) =>
   request(`/policies/versions/${versionId}/rollback`, {
     method: "POST",
   });
+
+  export type RazorpayOrder = {
+  key_id: string;
+  order_id: string;
+  amount: number;
+  currency: string;
+  receipt: string;
+  status: string;
+};
+
+export type PaymentVerificationResult = {
+  verified: boolean;
+  paid: boolean;
+  payment_id: string;
+  order_id: string;
+  payment_status: string;
+  order_status: string;
+  amount_inr?: number;
+  message: string;
+};
+
+export const createPaymentOrder = (
+  customerId: string,
+  cartId: string,
+  amountInr: number
+) =>
+  request<RazorpayOrder>("/checkout/payment/order", {
+    method: "POST",
+    body: JSON.stringify({
+      customer_id: customerId,
+      cart_id: cartId,
+      amount_inr: amountInr,
+    }),
+  });
+
+export const verifyPayment = (
+  razorpayPaymentId: string,
+  razorpayOrderId: string,
+  razorpaySignature: string
+) =>
+  request<PaymentVerificationResult>("/checkout/payment/verify", {
+    method: "POST",
+    body: JSON.stringify({
+      razorpay_payment_id: razorpayPaymentId,
+      razorpay_order_id: razorpayOrderId,
+      razorpay_signature: razorpaySignature,
+    }),
+  });
