@@ -41,6 +41,7 @@ def update_policy(req: PolicyUpdateRequest):
     }
 
 
+
 @router.post("/evaluate")
 def evaluate_policy(req: PolicyEvaluationRequest):
     try:
@@ -51,14 +52,16 @@ def evaluate_policy(req: PolicyEvaluationRequest):
             order_amount=req.order_amount,
         )
 
-        return policy_result
+        return {
+            "risk": risk_result,
+            "policy": policy_result,
+        }
 
     except ValueError as exc:
         raise HTTPException(
             status_code=400,
             detail=str(exc),
         )
-
 
 # ------------------------------------------------------------------
 # POLICY VERSION HISTORY

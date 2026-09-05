@@ -264,39 +264,55 @@ export default function PolicyStudio() {
 
 
   const simulate = async () => {
+  try {
+    setSimLoading(true);
+    setSimResult(null);
+    setMessage(null);
 
-    try {
+    const result = await evaluatePolicy(
+      simCustomer,
+      simAmount
+    ) as {
+      risk: {
+        customer_id: string;
+        risk_score: number;
+        risk_tier: string;
+        reason_codes?: string[];
+      };
+      policy: {
+        decision: string;
+        recommended_action: string;
+        reason_codes?: string[];
+        requires_human_approval: boolean;
+      };
+    };
 
-      setSimLoading(true);
+    setSimResult({
+      customer_id: result.risk.customer_id,
+      risk_score: result.risk.risk_score,
+      risk_tier: result.risk.risk_tier,
+      decision: result.policy.decision,
+      recommended_action: result.policy.recommended_action,
+      reason_codes:
+        result.policy.reason_codes ??
+        result.risk.reason_codes ??
+        [],
+      requires_human_approval:
+        result.policy.requires_human_approval,
+    });
 
-      setSimResult(null);
+  } catch (error) {
+    console.error(error);
 
-      setMessage(null);
-
-      const result =
-        (await evaluatePolicy(
-          simCustomer,
-          simAmount
-        )) as EvaluationResult;
-
-      setSimResult(result);
-
-    } catch (error) {
-
-      console.error(error);
-
-      setMessage(
-        error instanceof Error
-          ? error.message
-          : "Simulation failed."
-      );
-
-    } finally {
-
-      setSimLoading(false);
-
-    }
-  };
+    setMessage(
+      error instanceof Error
+        ? error.message
+        : "Simulation failed."
+    );
+  } finally {
+    setSimLoading(false);
+  }
+};
 
 
   const rollback = async (
