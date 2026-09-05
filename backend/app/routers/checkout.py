@@ -61,17 +61,17 @@ def evaluate_checkout(req: EvaluateCheckoutRequest):
     )
 
     trustpass = issue_trustpass(
-        policy,
-        subject_type="checkout",
-        subject_id=req.cart_id,
-        max_permitted_amount_inr=(
-            req.order_amount
-            if order_creation_allowed
-            else 0
-        ),
-        coupon_cap_inr=req.coupon_cap_inr,
-    )
-
+    policy,
+    subject_type="checkout",
+    subject_id=req.cart_id,
+    customer_id=req.customer_id,
+    max_permitted_amount_inr=(
+        req.order_amount
+        if order_creation_allowed
+        else 0
+    ),
+    coupon_cap_inr=req.coupon_cap_inr,
+)
     create_alert(
         risk,
         policy,
